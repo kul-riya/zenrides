@@ -1,0 +1,11 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "ZenRides",
+      "request": "launch",
+      "type": "dart",
+      "toolArgs": ["-d", "chrome", "--web-port=8080", "--dart-define-from-file=.env"]
+    }
+  ]
+}

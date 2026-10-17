@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0F172A">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="ZenRides">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <link rel="apple-touch-icon" href="/icons/Icon-192.png">
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="manifest" href="/manifest.json">
+  <title>Open ZenRides</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "Segoe UI", system-ui, sans-serif;
+      background: #0f172a;
+      color: #f8fafc;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px 16px 40px;
+    }
+    main { width: min(420px, 100%); }
+    p.kicker {
+      margin: 0 0 8px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      font-size: 12px;
+      font-weight: 700;
+      color: #93c5fd;
+    }
+    h1 { margin: 0 0 8px; font-size: 32px; line-height: 1.1; }
+    .lead { margin: 0 0 20px; color: #cbd5e1; line-height: 1.45; }
+    a.button, button.button {
+      display: block;
+      width: 100%;
+      text-align: center;
+      text-decoration: none;
+      border: 0;
+      border-radius: 14px;
+      padding: 14px 16px;
+      font-size: 16px;
+      font-weight: 800;
+      cursor: pointer;
+      margin: 0 0 10px;
+    }
+    .primary { background: #1a73e8; color: white; }
+    .secondary { background: white; color: #0f172a; }
+    ol { margin: 0 0 16px; padding-left: 20px; color: #e2e8f0; line-height: 1.45; }
+    li { margin: 0 0 8px; }
+    .card {
+      background: #1e293b;
+      border-radius: 18px;
+      padding: 16px;
+      margin-bottom: 16px;
+    }
+    .card h2 { margin: 0 0 8px; font-size: 16px; }
+    .note { color: #94a3b8; font-size: 13px; line-height: 1.4; }
+  </style>
+</head>
+<body>
+  <main>
+    <p class="kicker">ZenRides</p>
+    <h1>Open the ride</h1>
+    <p class="lead" id="lead">Same link on Android and iPhone. The phone you are holding decides the next step.</p>
+
+    <section id="iphone" class="card" hidden>
+      <h2>iPhone</h2>
+      <p class="note">This opens the ZenRides app in Safari. An APK does not install on iPhone.</p>
+      <ol>
+        <li>Tap <strong>Share</strong> at the bottom of Safari (the square with the arrow).</li>
+        <li>Tap <strong>Add to Home Screen</strong>.</li>
+        <li>Tap <strong>Add</strong>. The icon opens ZenRides full screen.</li>
+      </ol>
+      <a class="button primary" href="/?home=1">Open the app</a>
+    </section>
+
+    <section id="android" class="card" hidden>
+      <h2>Android</h2>
+      <a class="button secondary" href="/zenrides.apk" download>Download the APK</a>
+      <a class="button primary" href="/">Open the app</a>
+      <p class="note">The download is the Android install file. Open the app runs the same ZenRides page in Chrome. From the Chrome menu you can also choose Install app.</p>
+    </section>
+
+    <section id="other" class="card">
+      <h2>On a phone</h2>
+      <a class="button primary" href="/">Open the app</a>
+      <a class="button secondary" href="/zenrides.apk">Android APK</a>
+      <p class="note">iPhone uses Add to Home Screen inside Safari. The APK is only for Android.</p>
+    </section>
+  </main>
+  <script>
+    (function () {
+      var ua = navigator.userAgent || '';
+      var iphone = /iPhone|iPad|iPod/.test(ua);
+      var android = /Android/i.test(ua);
+      var other = document.getElementById('other');
+      if (iphone) {
+        other.hidden = true;
+        document.getElementById('iphone').hidden = false;
+        document.getElementById('lead').textContent = 'Opening ZenRides. Then add it to your Home Screen from Safari.';
+        window.setTimeout(function () { location.replace('/?home=1'); }, 700);
+      } else if (android) {
+        other.hidden = true;
+        document.getElementById('android').hidden = false;
+        document.getElementById('lead').textContent = 'Install the Android file, or open the same app in the browser.';
+      }
+    })();
+  </script>
+</body>
+</html>
