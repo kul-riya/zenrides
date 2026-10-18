@@ -50,5 +50,4 @@ app.*.map.json
 # API keys
 .env
 
-# Generated Firebase files
-lib/firebase_options.dart
+public/

@@ -116,20 +116,8 @@ class RideController extends ChangeNotifier {
   static const groupCode = 'ZEN-4365';
   static const staleAfter = Duration(seconds: 12);
   static const dropKm = 0.5;
-  static const _keepRemote = Duration(minutes: 30);
 
-  static const route = <LatLng>[
-    LatLng(18.3000, 73.7900),
-    LatLng(18.3300, 73.8200),
-    LatLng(18.3550, 73.8450),
-    LatLng(18.3706, 73.8540),
-    LatLng(18.3900, 73.8750),
-    LatLng(18.4150, 73.9000),
-    LatLng(18.4400, 73.9300),
-    LatLng(18.4700, 73.9600),
-  ];
-
-  static const _chaiAt = <double>[0.33, 0.66];
+  static const parked = LatLng(18.3706, 73.8540);
 
   final RideApi _api;
   final DateTime Function() _clock;
@@ -193,7 +181,6 @@ class RideController extends ChangeNotifier {
   bool navArrived = false;
   int stepIndex = 0;
   double navKm = 0;
-  double youProgress = 0.42;
   double traveledKm = 0;
   double cruiseKmh = 62;
   int arrived = 0;
@@ -216,19 +203,13 @@ class RideController extends ChangeNotifier {
   final Set<String> removed = {};
   final Map<String, RemoteRider> remote = {};
 
-  double get routeKm => _lengthKm(route);
-
-  LatLng get you {
-    final fix = gpsFix;
-    if (!ended && gpsLocked && fix != null) return fix;
+  double get routeKm {
     final drive = chosen;
-    if (navigating && drive != null && drive.points.length >= 2) {
-      final length = _lengthKm(drive.points);
-      if (length == 0) return drive.points.first;
-      return _along(drive.points, (navKm / length).clamp(0.0, 0.999999));
-    }
-    return _along(route, youProgress);
+    if (drive == null || (roadFitsSomeDay && !roadFitsDay)) return 0;
+    return drive.distanceMeters > 0 ? drive.distanceMeters / 1000 : _lengthKm(drive.points);
   }
+
+  LatLng get you => gpsFix ?? startPoint ?? parked;
 
   RouteChoice? get chosen {
     if (routes.isEmpty) return null;
@@ -240,8 +221,8 @@ class RideController extends ChangeNotifier {
     final drive = chosen;
     if (drive == null) return 0;
     final length = drive.distanceMeters > 0 ? drive.distanceMeters / 1000 : _lengthKm(drive.points);
-    if (gpsLocked && gpsFix != null) return _remainingAlong(drive.points, you);
-    return max(0, length - navKm);
+    if (gpsFix != null) return _remainingAlong(drive.points, you);
+    return length;
   }
 
   int get remainingMinutes {
@@ -272,7 +253,7 @@ class RideController extends ChangeNotifier {
     if (!navigating) return null;
     final drive = chosen;
     if (drive == null || pumps.isEmpty) return null;
-    final hereKm = gpsLocked && gpsFix != null ? _traveledAlong(drive.points, you) : navKm;
+    final hereKm = gpsFix != null ? _traveledAlong(drive.points, you) : 0.0;
     double? best;
     for (final pump in pumps) {
       final ahead = (_traveledAlong(drive.points, pump.point) - hereKm) * 1000;
@@ -293,10 +274,9 @@ class RideController extends ChangeNotifier {
   double get travelHeading {
     if (!ended && gpsLocked && _course != null) return _course!;
     final drive = chosen;
-    if (drive != null && drive.points.length >= 2 && (navigating || !gpsLocked)) {
+    if (navigating && gpsFix != null && drive != null && drive.points.length >= 2) {
       return _headingAlong(drive.points, you);
     }
-    if (!gpsLocked) return _headingAlong(route, you);
     return _course ?? 0;
   }
 
@@ -319,7 +299,6 @@ class RideController extends ChangeNotifier {
     ];
     for (final rider in remote.values) {
       if (removed.contains(rider.id) || rider.id == riderId) continue;
-      if (now.difference(rider.updatedAt) > _keepRemote) continue;
       final km = _distance.as(LengthUnit.Kilometer, you, LatLng(rider.lat, rider.lng));
       rows.add(PackRow(
         id: rider.id,
@@ -342,10 +321,8 @@ class RideController extends ChangeNotifier {
     ];
     if (!showOthers) return pins;
     final used = <int>{};
-    final now = _clock();
     for (final rider in remote.values) {
       if (removed.contains(rider.id) || rider.id == riderId) continue;
-      if (now.difference(rider.updatedAt) > _keepRemote) continue;
       pins.add(MapRider(
         id: rider.id,
         name: rider.name,
@@ -416,6 +393,67 @@ class RideController extends ChangeNotifier {
     ];
   }
 
+  /// The road for the day shown on the map. Uses the driving line when it
+  /// starts on this day and ends on one of this day's places.
+  List<LatLng> get shownRoute {
+    final marks = _dayMarks(planning ? planDay : ridingDay, draft: planning);
+    if (marks.length < 2) return const [];
+    final road = chosen;
+    if (road != null && _roadFitsMarks(road.points, marks)) return road.points;
+    return marks;
+  }
+
+  /// True when the saved driving line belongs to the day selected on screen.
+  bool get roadFitsDay {
+    final road = chosen;
+    if (road == null) return false;
+    return _roadFitsMarks(road.points, _dayMarks(planning ? planDay : ridingDay, draft: planning));
+  }
+
+  /// True when that line belongs to some day of this ride, even if it is not
+  /// the day selected on screen.
+  bool get roadFitsSomeDay {
+    final road = chosen;
+    if (road == null) return false;
+    final days = planning ? draftDays : tripDays;
+    final draft = planning;
+    for (var day = 1; day <= days; day++) {
+      if (_roadFitsMarks(road.points, _dayMarks(day, draft: draft))) return true;
+    }
+    return false;
+  }
+
+  List<LatLng> _dayMarks(int day, {required bool draft}) {
+    final total = draft ? draftDays : tripDays;
+    final origin = day <= 1
+        ? (draft ? draftStart : startPoint)
+        : dayEnd(day - 1, draft: draft)?.point ?? (draft ? draftStart : startPoint);
+    final end = dayEnd(day, draft: draft)?.point ?? (day >= total ? (draft ? draftFinish : finishPoint) : null);
+    final marks = <LatLng>[];
+    void add(LatLng? point) {
+      if (point == null) return;
+      if (marks.isNotEmpty && _distance.as(LengthUnit.Meter, marks.last, point) < 400) return;
+      marks.add(point);
+    }
+
+    add(origin);
+    for (final stop in dayStops(day, draft: draft)) {
+      add(stop.point);
+    }
+    add(end);
+    return marks;
+  }
+
+  bool _roadFitsMarks(List<LatLng> road, List<LatLng> marks) {
+    if (road.length < 2 || marks.length < 2) return false;
+    if (_distance.as(LengthUnit.Meter, road.first, marks.first) >= 800) return false;
+    final end = road.last;
+    for (final mark in marks) {
+      if (_distance.as(LengthUnit.Meter, end, mark) < 800) return true;
+    }
+    return false;
+  }
+
   List<RideHalt> dayStops(int day, {bool draft = false}) {
     final source = draft ? draftHalts : halts;
     return [for (final halt in source) if (halt.day == day && halt.kind == HaltKind.stop) halt];
@@ -441,10 +479,11 @@ class RideController extends ChangeNotifier {
         try {
           final profile = await _api.ensureUser(uid: user.uid, name: riderName);
           riderName = profile.name;
-          admin = profile.admin;
           if (profile.rideCode.isNotEmpty) {
             code = profile.rideCode;
             onRide = true;
+            final adminId = await _api.rideAdmin(profile.rideCode);
+            admin = adminId == user.uid;
           }
         } catch (_) {}
       }
@@ -499,21 +538,8 @@ class RideController extends ChangeNotifier {
     notifyListeners();
   }
 
-  void tick([Duration dt = const Duration(milliseconds: 200)]) {
-    if (ended || paused) return;
-    final stepKm = cruiseKmh / 3600 * (dt.inMilliseconds / 1000);
-    final delta = routeKm == 0 ? 0.0 : stepKm / routeKm;
-    final now = _clock();
-    youProgress = _advance('you', youProgress, delta, now);
-    traveledKm += stepKm;
-    if (navigating && !(gpsLocked && gpsFix != null)) {
-      final drive = chosen;
-      if (drive != null) {
-        final length = _lengthKm(drive.points);
-        navKm = min(length, navKm + stepKm);
-        navArrived = length > 0 && navKm >= length - 0.05;
-      }
-    }
+  void tick([Duration _ = const Duration(milliseconds: 200)]) {
+    if (ended || paused || !gpsLocked) return;
     _syncStep();
     notifyListeners();
   }
@@ -907,12 +933,42 @@ class RideController extends ChangeNotifier {
     }
   }
 
+  void placeYou(LatLng point) {
+    if (ended || gpsLocked) return;
+    final previous = gpsFix;
+    if (previous != null) {
+      final moved = _distance.as(LengthUnit.Meter, previous, point);
+      if (moved >= 4) _course = _bearing(previous, point);
+      traveledKm += moved / 1000;
+    }
+    gpsFix = point;
+    gpsAt = _clock();
+    final drive = chosen;
+    if (navigating && drive != null && drive.points.length >= 2) {
+      final length = _lengthKm(drive.points);
+      navKm = min(length, _traveledAlong(drive.points, point));
+      navArrived = length > 0 && navKm >= length - 0.05;
+      _syncStep();
+    }
+    notifyListeners();
+    if (!_network || paused || !onRide) return;
+    unawaited(_api.pushLocation(
+      code: code,
+      id: riderId,
+      name: riderName,
+      lat: point.latitude,
+      lng: point.longitude,
+      at: gpsAt!,
+    ).catchError((_) {}));
+  }
+
   void _applyFix(Position position) {
     final next = LatLng(position.latitude, position.longitude);
     final previous = gpsFix;
     if (previous != null) {
       final moved = _distance.as(LengthUnit.Meter, previous, next);
       if (moved >= 4) _course = _bearing(previous, next);
+      traveledKm += moved / 1000;
     }
     if (position.heading >= 0 && position.speed >= 0.8) _course = position.heading;
     gpsFix = next;
@@ -995,8 +1051,11 @@ class RideController extends ChangeNotifier {
   }
 
   void selectPlanDay(int day) {
-    planDay = day.clamp(1, draftDays);
-    notifyListeners();
+    final next = day.clamp(1, draftDays);
+    if (next == planDay) return;
+    planDay = next;
+    routeFit++;
+    _loadPlanRoads();
   }
 
   void selectPlanSlot(PlanSlot slot) {
@@ -1147,6 +1206,7 @@ class RideController extends ChangeNotifier {
       ridingDay += 1;
       dayStarted = _clock();
       traveledKm = 0;
+      routeFit++;
     }
     notifyListeners();
   }
@@ -1160,8 +1220,9 @@ class RideController extends ChangeNotifier {
     remote.clear();
     joinNote = '';
     notifyListeners();
+    admin = false;
     if (_network) unawaited(_api.deleteRider(leavingCode, leavingId).catchError((_) {}));
-    _rememberRide('');
+    _rememberRide('', asAdmin: false);
   }
 
   void setCode(String next) {
@@ -1180,12 +1241,15 @@ class RideController extends ChangeNotifier {
     }
     code = next;
     onRide = true;
+    admin = false;
     joinNote = _network ? 'Joining $next…' : 'Could not reach the ride.';
     remote.clear();
     _clearSavedPlan();
     notifyListeners();
-    if (_network) unawaited(_syncGroup());
-    _rememberRide(next);
+    if (_network) {
+      unawaited(_syncGroup());
+      unawaited(_adoptRide(next));
+    }
     return next;
   }
 
@@ -1203,10 +1267,9 @@ class RideController extends ChangeNotifier {
   }
 
   List<JoinedPhone> get joinedPhones {
-    final now = _clock();
     final others = [
       for (final rider in remote.values)
-        if (rider.id != riderId && now.difference(rider.updatedAt) <= staleAfter)
+        if (rider.id != riderId && !removed.contains(rider.id))
           JoinedPhone(label: rider.name, you: false),
     ]..sort((a, b) => a.label.compareTo(b.label));
     return [
@@ -1220,13 +1283,15 @@ class RideController extends ChangeNotifier {
     final next = 'ZEN-${1000 + rand.nextInt(9000)}';
     code = next;
     onRide = true;
+    admin = true;
     joinNote = '';
     remote.clear();
     notifyListeners();
     if (_network) {
+      unawaited(_api.claimRide(next, riderId).then((_) {}, onError: (Object _) {}));
       unawaited(_pushCurrentPlan());
       unawaited(_syncGroup());
-      _rememberRide(next);
+      _rememberRide(next, asAdmin: true);
     }
     return next;
   }
@@ -1359,9 +1424,30 @@ class RideController extends ChangeNotifier {
     return null;
   }
 
+  /// Where this day's road should finish. A day that ends where it started
+  /// uses its last stop, so a loop is not drawn as the next day's road.
+  ({LatLng point, String name})? _dayLegDestination() {
+    final origin = _legOrigin(planDay);
+    final end = dayEnd(planDay, draft: true);
+    if (end != null && (origin == null || _distance.as(LengthUnit.Meter, origin, end.point) >= 400)) {
+      return (point: end.point, name: end.name);
+    }
+    for (final stop in dayStops(planDay, draft: true).reversed) {
+      if (origin == null || _distance.as(LengthUnit.Meter, origin, stop.point) >= 400) {
+        return (point: stop.point, name: stop.name);
+      }
+    }
+    if (planDay >= draftDays &&
+        draftFinish != null &&
+        (origin == null || _distance.as(LengthUnit.Meter, origin, draftFinish!) >= 400)) {
+      return (point: draftFinish!, name: draftFinishName.isEmpty ? 'Finish' : draftFinishName);
+    }
+    return null;
+  }
+
   void _loadPlanRoads() {
     final origin = _legOrigin(planDay);
-    final end = _planDestination();
+    final end = _dayLegDestination();
     if (origin == null || end == null) {
       planNote = draftStart == null ? 'Set a start, then choose the day end to see the roads.' : planNote;
       planFit++;
@@ -1440,37 +1526,33 @@ class RideController extends ChangeNotifier {
     return slot;
   }
 
-  double _advance(String id, double progress, double delta, DateTime now) {
-    final hold = _holdUntil[id];
-    if (hold != null && now.isBefore(hold)) return progress;
-    var next = progress + delta;
-    for (final mark in _chaiAt) {
-      final wrapped = progress.floor();
-      final local = progress - wrapped;
-      final nextLocal = next - wrapped;
-      if (local < mark && nextLocal >= mark) {
-        _holdUntil[id] = now.add(const Duration(seconds: 4));
-        return wrapped + mark;
-      }
-    }
-    return next;
-  }
-
   bool _holding(String id) {
     final hold = _holdUntil[id];
     return hold != null && _clock().isBefore(hold);
   }
 
-  void _rememberRide(String rideCode) {
+  void _rememberRide(String rideCode, {required bool asAdmin}) {
     if (!_network) return;
-    unawaited(_api.setRideCode(riderId, rideCode).then((_) {}, onError: (Object _) {}));
+    unawaited(_api.setMembership(riderId, rideCode: rideCode, role: asAdmin ? 'admin' : 'rider').then((_) {}, onError: (Object _) {}));
+  }
+
+  Future<void> _adoptRide(String rideCode) async {
+    try {
+      final adminId = await _api.rideAdmin(rideCode);
+      if (code != rideCode) return;
+      admin = adminId == riderId;
+      notifyListeners();
+      _rememberRide(rideCode, asAdmin: admin);
+    } catch (_) {
+      _rememberRide(rideCode, asAdmin: false);
+    }
   }
 
   Future<void> _syncGroup() async {
     if (ended || !onRide) return;
     try {
-      if (!paused) {
-        final here = you;
+      final here = gpsFix;
+      if (!paused && gpsLocked && here != null) {
         await _api.pushLocation(
           code: code,
           id: riderId,

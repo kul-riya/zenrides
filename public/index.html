@@ -1,89 +1,486 @@
 <!DOCTYPE html>
 <html>
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Welcome to Firebase Hosting</title>
+<head>
+  <!--
+    If you are serving your web app in a path other than the root, change the
+    href value below to reflect the base path you are serving from.
 
-    <!-- update the version number as needed -->
-    <script defer src="/__/firebase/13.0.0/firebase-app-compat.js"></script>
-    <!-- include only the Firebase features as you need -->
-    <script defer src="/__/firebase/13.0.0/firebase-auth-compat.js"></script>
-    <script defer src="/__/firebase/13.0.0/firebase-database-compat.js"></script>
-    <script defer src="/__/firebase/13.0.0/firebase-firestore-compat.js"></script>
-    <script defer src="/__/firebase/13.0.0/firebase-functions-compat.js"></script>
-    <script defer src="/__/firebase/13.0.0/firebase-messaging-compat.js"></script>
-    <script defer src="/__/firebase/13.0.0/firebase-storage-compat.js"></script>
-    <script defer src="/__/firebase/13.0.0/firebase-analytics-compat.js"></script>
-    <script defer src="/__/firebase/13.0.0/firebase-remote-config-compat.js"></script>
-    <script defer src="/__/firebase/13.0.0/firebase-performance-compat.js"></script>
-    <!-- 
-      initialize the SDK after all desired features are loaded, set useEmulator to false
-      to avoid connecting the SDK to running emulators.
-    -->
-    <script defer src="/__/firebase/init.js?useEmulator=true"></script>
+    The path provided below has to start and end with a slash "/" in order for
+    it to work correctly.
 
-    <style media="screen">
-      body { background: #ECEFF1; color: rgba(0,0,0,0.87); font-family: Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 0; }
-      #message { background: white; max-width: 360px; margin: 100px auto 16px; padding: 32px 24px; border-radius: 3px; }
-      #message h2 { color: #ffa100; font-weight: bold; font-size: 16px; margin: 0 0 8px; }
-      #message h1 { font-size: 22px; font-weight: 300; color: rgba(0,0,0,0.6); margin: 0 0 16px;}
-      #message p { line-height: 140%; margin: 16px 0 24px; font-size: 14px; }
-      #message a { display: block; text-align: center; background: #039be5; text-transform: uppercase; text-decoration: none; color: white; padding: 16px; border-radius: 4px; }
-      #message, #message a { box-shadow: 0 1px 3px rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.24); }
-      #load { color: rgba(0,0,0,0.4); text-align: center; font-size: 13px; }
-      @media (max-width: 600px) {
-        body, #message { margin-top: 0; background: white; box-shadow: none; }
-        body { border-top: 16px solid #ffa100; }
-      }
-    </style>
-  </head>
-  <body>
-    <div id="message">
-      <h2>Welcome</h2>
-      <h1>Firebase Hosting Setup Complete</h1>
-      <p>You're seeing this because you've successfully setup Firebase Hosting. Now it's time to go build something extraordinary!</p>
-      <a target="_blank" href="https://firebase.google.com/docs/hosting/">Open Hosting Documentation</a>
-    </div>
-    <p id="load">Firebase SDK Loading&hellip;</p>
+    For more details:
+    * https://developer.mozilla.org/en-US/docs/Web/HTML/Element/base
 
-    <script>
-      document.addEventListener('DOMContentLoaded', function() {
-        const loadEl = document.querySelector('#load');
-        // // 🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥
-        // // The Firebase SDK is initialized and available here!
-        //
-        // firebase.auth().onAuthStateChanged(user => { });
-        // firebase.database().ref('/path/to/ref').on('value', snapshot => { });
-        // firebase.firestore().doc('/foo/bar').get().then(() => { });
-        // firebase.functions().httpsCallable('yourFunction')().then(() => { });
-        // firebase.messaging().requestPermission().then(() => { });
-        // firebase.storage().ref('/path/to/ref').getDownloadURL().then(() => { });
-        // firebase.analytics(); // call to activate
-        // firebase.analytics().logEvent('tutorial_completed');
-        // firebase.performance(); // call to activate
-        //
-        // // 🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥🔥
+    This is a placeholder for base href that will be replaced by the value of
+    the `--base-href` argument provided to `flutter build`.
+  -->
+  <base href="/">
 
-        try {
-          let app = firebase.app();
-          let features = [
-            'auth', 
-            'database', 
-            'firestore',
-            'functions',
-            'messaging', 
-            'storage', 
-            'analytics', 
-            'remoteConfig',
-            'performance',
-          ].filter(feature => typeof app[feature] === 'function');
-          loadEl.textContent = `Firebase SDK loaded with ${features.join(', ')}`;
-        } catch (e) {
-          console.error(e);
-          loadEl.textContent = 'Error loading the Firebase SDK, check the console.';
+  <meta charset="UTF-8">
+  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+  <meta name="description" content="ZenRides ride HUD">
+
+  <!-- iOS meta tags & icons -->
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+  <style>
+    input, textarea { font-size: 16px !important; }
+  </style>
+  <script>
+    (function () {
+      var ua = navigator.userAgent || '';
+      var mobile = /iPhone|iPad|iPod|Android/i.test(ua) || (navigator.maxTouchPoints > 1 && /Mac/.test(navigator.platform || ''));
+      if (!mobile || !window.HTMLElement) return;
+      var original = HTMLElement.prototype.focus;
+      HTMLElement.prototype.focus = function () {
+        if (this.classList && this.classList.contains('flt-text-editing')) {
+          if ((this.style.transform || '').indexOf('-9999') !== -1) this.style.transform = 'none';
+          this.removeAttribute('readonly');
+          return original.call(this);
         }
-      });
-    </script>
-  </body>
+        return original.apply(this, arguments);
+      };
+    })();
+  </script>
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <meta name="apple-mobile-web-app-title" content="ZenRides">
+  <meta name="theme-color" content="#0F172A">
+  <link rel="apple-touch-icon" href="icons/Icon-192.png">
+
+  <!-- Favicon -->
+  <link rel="icon" type="image/png" href="favicon.png"/>
+
+  <title>ZenRides</title>
+  <link rel="manifest" href="manifest.json">
+  <script>
+    (function () {
+      function ready() {
+        return !!(window.google && google.maps && google.maps.importLibrary);
+      }
+
+      function minutes(ms) {
+        var total = Math.max(1, Math.round(ms / 60000));
+        var hours = Math.floor(total / 60);
+        var mins = total % 60;
+        if (!hours) return total + ' min';
+        return mins ? hours + ' hr ' + mins + ' min' : hours + ' hr';
+      }
+
+      function kilometers(meters) {
+        if (meters < 1000) return Math.round(meters) + ' m';
+        return (meters / 1000).toFixed(meters < 10000 ? 1 : 0) + ' km';
+      }
+
+      function decodePolyline(str, precision) {
+        var index = 0, lat = 0, lng = 0, coordinates = [], factor = Math.pow(10, precision || 6);
+        while (index < str.length) {
+          var shift = 0, result = 0, byte = 0;
+          do {
+            byte = str.charCodeAt(index++) - 63;
+            result |= (byte & 0x1f) << shift;
+            shift += 5;
+          } while (byte >= 0x20);
+          lat += (result & 1) ? ~(result >> 1) : (result >> 1);
+          shift = 0;
+          result = 0;
+          do {
+            byte = str.charCodeAt(index++) - 63;
+            result |= (byte & 0x1f) << shift;
+            shift += 5;
+          } while (byte >= 0x20);
+          lng += (result & 1) ? ~(result >> 1) : (result >> 1);
+          coordinates.push({ lat: lat / factor, lng: lng / factor });
+        }
+        return coordinates;
+      }
+
+      function pointOf(location) {
+        if (!location) return null;
+        var lat = typeof location.lat === 'function' ? location.lat() : location.lat;
+        var lng = typeof location.lng === 'function' ? location.lng() : location.lng;
+        if (typeof lat !== 'number' || typeof lng !== 'number') return null;
+        return { lat: lat, lng: lng };
+      }
+
+      async function overpassFuel(lat, lng) {
+        var query = '[out:json][timeout:12];(node["amenity"="fuel"](around:15000,' + lat + ',' + lng + ');way["amenity"="fuel"](around:15000,' + lat + ',' + lng + '););out center 80;';
+        var servers = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
+        var last = 'Fuel lookup failed';
+        for (var i = 0; i < servers.length; i++) {
+          try {
+            var response = await fetch(servers[i], { method: 'POST', body: new URLSearchParams({ data: query }) });
+            if (!response.ok) continue;
+            var body = await response.json();
+            return (body.elements || []).map(function (el) {
+              var spotLat = el.lat, spotLng = el.lon;
+              if ((spotLat == null || spotLng == null) && el.center) {
+                spotLat = el.center.lat;
+                spotLng = el.center.lon;
+              }
+              if (spotLat == null || spotLng == null) return null;
+              var tags = el.tags || {};
+              return {
+                id: el.type + '-' + el.id,
+                name: tags.brand || tags.name || tags.operator || 'Petrol pump',
+                lat: spotLat,
+                lng: spotLng
+              };
+            }).filter(Boolean);
+          } catch (error) {
+            last = error.message || String(error);
+          }
+        }
+        throw new Error(last);
+      }
+
+      async function photonSearch(query, lat, lng) {
+        var response = await fetch('https://photon.komoot.io/api/?q=' + encodeURIComponent(query) + '&lat=' + lat + '&lon=' + lng + '&limit=6');
+        if (!response.ok) throw new Error('Search failed');
+        var body = await response.json();
+        var seen = {};
+        return (body.features || []).map(function (feature) {
+          var props = feature.properties || {};
+          var coords = feature.geometry && feature.geometry.coordinates;
+          if (!coords) return null;
+          var id = coords[1] + ',' + coords[0];
+          if (seen[id]) return null;
+          seen[id] = true;
+          return {
+            placeId: id,
+            name: props.name || query,
+            detail: [props.street, props.city, props.state, props.country].filter(Boolean).join(', ')
+          };
+        }).filter(Boolean);
+      }
+
+      async function osrmRoutes(oLat, oLng, dLat, dLng) {
+        var url = 'https://router.project-osrm.org/route/v1/driving/' +
+          oLng + ',' + oLat + ';' + dLng + ',' + dLat +
+          '?alternatives=true&overview=full&geometries=geojson&steps=true';
+        var response = await fetch(url);
+        if (!response.ok) throw new Error('Directions failed');
+        var data = await response.json();
+        var routes = (data.routes || []).map(function (route) {
+          var coords = (route.geometry && route.geometry.coordinates) || [];
+          var points = coords.map(function (pair) { return { lat: pair[1], lng: pair[0] }; });
+          var names = [];
+          var steps = [];
+          ((route.legs || [])[0] || {}).steps && ((route.legs || [])[0].steps || []).forEach(function (step) {
+            var road = step.name;
+            if (road && names.indexOf(road) < 0) names.push(road);
+            var at = (step.maneuver && step.maneuver.location) || [oLng, oLat];
+            steps.push({
+              instruction: (step.maneuver && step.maneuver.type) ? ((road ? road + ' · ' : '') + step.maneuver.type) : (road || 'Continue'),
+              lat: at[1],
+              lng: at[0]
+            });
+          });
+          return {
+            summary: names.slice(0, 2).join(' · ') || 'Driving route',
+            duration: minutes((route.duration || 0) * 1000),
+            distance: kilometers(route.distance || 0),
+            durationSeconds: Math.round(route.duration || 0),
+            distanceMeters: Math.round(route.distance || 0),
+            points: points,
+            steps: steps
+          };
+        }).filter(function (route) { return route.points.length >= 2; });
+        if (!routes.length) throw new Error('No driving route from here.');
+        return routes;
+      }
+
+      async function valhallaRoutes(oLat, oLng, dLat, dLng) {
+        var body = {
+          locations: [{ lon: oLng, lat: oLat }, { lon: dLng, lat: dLat }],
+          costing: 'auto',
+          alternates: 2,
+          directions_options: { units: 'kilometers' }
+        };
+        var response = await fetch('https://valhalla1.openstreetmap.de/route?json=' + encodeURIComponent(JSON.stringify(body)));
+        if (!response.ok) throw new Error('Directions failed');
+        var data = await response.json();
+        var trips = [];
+        if (data.trip) trips.push(data.trip);
+        (data.alternates || []).forEach(function (alt) { if (alt.trip) trips.push(alt.trip); });
+        var routes = trips.map(function (trip) {
+          var leg = (trip.legs || [])[0] || {};
+          var names = [];
+          (leg.maneuvers || []).forEach(function (step) {
+            (step.street_names || []).forEach(function (name) {
+              if (name && names.indexOf(name) < 0) names.push(name);
+            });
+          });
+          var points = decodePolyline(leg.shape || '', 6);
+          var steps = (leg.maneuvers || []).map(function (step) {
+            var at = points[Math.min(step.begin_shape_index || 0, Math.max(points.length - 1, 0))] || { lat: oLat, lng: oLng };
+            var road = (step.street_names || [])[0];
+            return {
+              instruction: step.instruction || (road ? 'Continue on ' + road : 'Continue'),
+              lat: at.lat,
+              lng: at.lng
+            };
+          });
+          return {
+            summary: names.slice(0, 2).join(' · ') || 'Driving route',
+            duration: minutes((trip.summary.time || 0) * 1000),
+            distance: kilometers((trip.summary.length || 0) * 1000),
+            durationSeconds: Math.round(trip.summary.time || 0),
+            distanceMeters: Math.round((trip.summary.length || 0) * 1000),
+            points: points,
+            steps: steps
+          };
+        }).filter(function (route) { return route.points.length >= 2; });
+        if (!routes.length) throw new Error('No driving route from here.');
+        return routes;
+      }
+
+      window.zenRidesMaps = {
+        nearbyFuel: async function (lat, lng) {
+          if (ready()) {
+            try {
+              var places = await google.maps.importLibrary('places');
+              var rank = places.SearchNearbyRankPreference && places.SearchNearbyRankPreference.DISTANCE;
+              var centers = [
+                { lat: lat, lng: lng },
+                { lat: lat + 0.06, lng: lng },
+                { lat: lat - 0.06, lng: lng },
+                { lat: lat, lng: lng + 0.06 },
+                { lat: lat, lng: lng - 0.06 }
+              ];
+              var seen = {};
+              var collected = [];
+              for (var i = 0; i < centers.length; i++) {
+                var request = {
+                  fields: ['displayName', 'location', 'id'],
+                  locationRestriction: { center: centers[i], radius: 8000 },
+                  includedPrimaryTypes: ['gas_station'],
+                  maxResultCount: 20
+                };
+                if (rank) request.rankPreference = rank;
+                try {
+                  var result = await places.Place.searchNearby(request);
+                  (result.places || []).forEach(function (place) {
+                    var spot = pointOf(place.location);
+                    if (!place.id || seen[place.id] || !spot) return;
+                    seen[place.id] = true;
+                    collected.push({ id: place.id, name: place.displayName || 'Petrol pump', lat: spot.lat, lng: spot.lng });
+                  });
+                } catch (error) {
+                  break;
+                }
+              }
+              if (collected.length) return JSON.stringify(collected);
+            } catch (error) {}
+          }
+          return JSON.stringify(await overpassFuel(lat, lng));
+        },
+        search: async function (query, lat, lng) {
+          if (ready()) {
+            try {
+              var places = await google.maps.importLibrary('places');
+              var result = await places.AutocompleteSuggestion.fetchAutocompleteSuggestions({
+                input: query,
+                origin: { lat: lat, lng: lng }
+              });
+              var hits = (result.suggestions || []).slice(0, 6).map(function (item) {
+                var prediction = item.placePrediction || {};
+                var main = prediction.mainText;
+                var secondary = prediction.secondaryText;
+                var full = prediction.text;
+                return {
+                  placeId: prediction.placeId,
+                  name: (main && (main.text || main)) || (full && (full.text || full)) || 'Place',
+                  detail: (secondary && (secondary.text || secondary)) || ''
+                };
+              }).filter(function (item) { return item.placeId; });
+              if (hits.length) return JSON.stringify(hits);
+            } catch (error) {}
+          }
+          return JSON.stringify(await photonSearch(query, lat, lng));
+        },
+        directions: async function (oLat, oLng, placeId) {
+          if (ready() && !/^-?\d+(\.\d+)?,-?\d+(\.\d+)?$/.test(placeId)) {
+            try {
+              var routesLib = await google.maps.importLibrary('routes');
+              var result = await routesLib.Route.computeRoutes({
+                origin: { lat: oLat, lng: oLng },
+                destination: 'places/' + placeId,
+                travelMode: 'DRIVING',
+                computeAlternativeRoutes: true,
+                fields: ['path', 'durationMillis', 'distanceMeters', 'description']
+              });
+              var routes = (result.routes || []).map(function (route) {
+                var points = [];
+                (route.path || []).forEach(function (point) {
+                  var spot = pointOf(point);
+                  if (spot) points.push(spot);
+                });
+                return {
+                  summary: route.description || 'Driving route',
+                  duration: minutes(route.durationMillis || 0),
+                  distance: kilometers(route.distanceMeters || 0),
+                  durationSeconds: Math.round((route.durationMillis || 0) / 1000),
+                  distanceMeters: Math.round(route.distanceMeters || 0),
+                  points: points,
+                  steps: points.length ? [{ instruction: route.description || 'Head to the destination', lat: points[0].lat, lng: points[0].lng }] : []
+                };
+              }).filter(function (route) { return route.points.length >= 2; });
+              if (routes.length) return JSON.stringify(routes);
+            } catch (error) {}
+          }
+          var parts = String(placeId).split(',');
+          if (parts.length !== 2) throw new Error('No driving route from here.');
+          var dLat = parseFloat(parts[0]);
+          var dLng = parseFloat(parts[1]);
+          try {
+            return JSON.stringify(await valhallaRoutes(oLat, oLng, dLat, dLng));
+          } catch (error) {
+            return JSON.stringify(await osrmRoutes(oLat, oLng, dLat, dLng));
+          }
+        },
+        hazards: async function (lat, lng, heading) {
+          function scrub(error) {
+            var text = error && (error.message || error.status) ? (error.message || error.status) : String(error);
+            return String(text).replace(/AIza[0-9A-Za-z_\-]+/g, '[key]');
+          }
+          function mapsKey() {
+            var scripts = document.getElementsByTagName('script');
+            for (var i = 0; i < scripts.length; i++) {
+              var src = scripts[i].src || '';
+              if (src.indexOf('maps.googleapis.com/maps/api/js') < 0) continue;
+              var match = src.match(/[?&]key=([^&]+)/);
+              if (match) return decodeURIComponent(match[1]);
+            }
+            return '';
+          }
+          var failures = [];
+          var hazards = [];
+          var rad = (heading || 0) * Math.PI / 180;
+          var km = 8;
+          var dest = {
+            lat: lat + (km / 110.574) * Math.cos(rad),
+            lng: lng + (km / (111.32 * Math.max(0.2, Math.cos(lat * Math.PI / 180)))) * Math.sin(rad)
+          };
+          if (!ready()) {
+            failures.push('Routes API Route.computeRoutes: Google Maps JavaScript library is not loaded');
+          } else {
+            try {
+              var routesLib = await google.maps.importLibrary('routes');
+              var result = await routesLib.Route.computeRoutes({
+                origin: { lat: lat, lng: lng },
+                destination: dest,
+                travelMode: 'DRIVING',
+                routingPreference: 'TRAFFIC_AWARE',
+                extraComputations: ['TRAFFIC_ON_POLYLINE'],
+                fields: ['path', 'warnings', 'description', 'speedPaths', 'legs']
+              });
+              (result.routes || []).forEach(function (route, ri) {
+                (route.warnings || []).forEach(function (warning, wi) {
+                  if (!warning) return;
+                  hazards.push({
+                    id: 'routes-warning-' + ri + '-' + wi,
+                    title: String(warning),
+                    detail: 'Routes API Route.computeRoutes warnings',
+                    lat: null,
+                    lng: null
+                  });
+                });
+                (route.speedPaths || []).forEach(function (segment, si) {
+                  var speed = segment.speed;
+                  var name = typeof speed === 'string' ? speed : (speed && String(speed));
+                  if (name !== 'TRAFFIC_JAM') return;
+                  var path = segment.path || [];
+                  if (!path.length) return;
+                  var spot = pointOf(path[Math.floor(path.length / 2)]);
+                  if (!spot) return;
+                  hazards.push({
+                    id: 'routes-jam-' + ri + '-' + si,
+                    title: 'Traffic jam',
+                    detail: 'Routes API speedPaths TRAFFIC_JAM',
+                    lat: spot.lat,
+                    lng: spot.lng
+                  });
+                });
+              });
+            } catch (error) {
+              failures.push('Routes API Route.computeRoutes: ' + scrub(error));
+            }
+          }
+          try {
+            var key = mapsKey();
+            var url = 'https://maps.googleapis.com/maps/api/directions/json?origin=' + lat + ',' + lng
+              + '&destination=' + dest.lat + ',' + dest.lng
+              + '&departure_time=now&key=' + encodeURIComponent(key);
+            var response = await fetch(url);
+            var body = await response.json();
+            if (!body || body.status !== 'OK') {
+              failures.push('Directions API directions/json: ' + ((body && body.status) || response.status) + (body && body.error_message ? ' — ' + body.error_message : ''));
+            } else {
+              (body.routes || []).forEach(function (route, ri) {
+                (route.warnings || []).forEach(function (warning, wi) {
+                  if (!warning) return;
+                  hazards.push({
+                    id: 'directions-warning-' + ri + '-' + wi,
+                    title: String(warning),
+                    detail: 'Directions API warnings',
+                    lat: null,
+                    lng: null
+                  });
+                });
+              });
+            }
+          } catch (error) {
+            failures.push('Directions API directions/json: ' + scrub(error));
+          }
+          return JSON.stringify({ hazards: hazards, failures: failures });
+        },
+        placePoint: async function (placeId) {
+          if (/^-?\d+(?:\.\d+)?,-?\d+(?:\.\d+)?$/.test(placeId)) {
+            var parts = placeId.split(',');
+            return JSON.stringify({ lat: parseFloat(parts[0]), lng: parseFloat(parts[1]) });
+          }
+          if (!ready()) throw new Error('The map is not loaded.');
+          var places = await google.maps.importLibrary('places');
+          var place = new places.Place({ id: placeId });
+          await place.fetchFields({ fields: ['location'] });
+          var spot = pointOf(place.location);
+          if (!spot) throw new Error('That place has no map point.');
+          return JSON.stringify(spot);
+        }
+      };
+    })();
+  </script>
+</head>
+<body>
+  <!--
+    You can customize the "flutter_bootstrap.js" script.
+    This is useful to provide a custom configuration to the Flutter loader
+    or to give the user feedback during the initialization process.
+
+    For more details:
+    * https://docs.flutter.dev/platform-integration/web/initialization
+  -->
+  <script>
+    (function () {
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('sw.js').catch(function () {});
+      }
+      var params = new URLSearchParams(location.search);
+      var ios = /iPhone|iPad|iPod/.test(navigator.userAgent || '');
+      var standalone = window.navigator.standalone === true ||
+        (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
+      if (!params.has('home') || !ios || standalone) return;
+      history.replaceState(null, '', location.pathname);
+      var card = document.createElement('aside');
+      card.setAttribute('role', 'dialog');
+      card.setAttribute('aria-label', 'Add ZenRides to your Home Screen');
+      card.style.cssText = 'position:fixed;left:12px;right:12px;bottom:12px;z-index:99999;background:#0f172a;color:#f8fafc;border-radius:18px;padding:16px;font:16px/1.4 system-ui,sans-serif;box-shadow:0 12px 40px rgba(0,0,0,.35)';
+      card.innerHTML = '<strong style="display:block;font-size:18px;margin-bottom:8px">Add ZenRides to your Home Screen</strong><ol style="margin:0 0 12px;padding-left:20px"><li>Tap <b>Share</b> at the bottom of Safari.</li><li>Tap <b>Add to Home Screen</b>.</li><li>Tap <b>Add</b>.</li></ol><button type="button" style="width:100%;border:0;border-radius:12px;padding:12px;font-weight:800;background:#1a73e8;color:white">Continue in the app</button>';
+      document.body.appendChild(card);
+      card.querySelector('button').addEventListener('click', function () { card.remove(); });
+    })();
+  </script>
+  <script src="flutter_bootstrap.js" async></script>
+</body>
 </html>

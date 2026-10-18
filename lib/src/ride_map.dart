@@ -37,6 +37,7 @@ class _RideMapState extends State<RideMap> {
   int _seenPlan = 0;
   bool _ready = false;
   bool _programmatic = false;
+  bool _askingPin = false;
 
   RideController get ride => widget.ride;
 
@@ -72,15 +73,15 @@ class _RideMapState extends State<RideMap> {
 
   void _onRide() {
     if (!mounted) return;
-    if (ride.gpsLocked && !_gpsWasLocked) _follow = true;
+    if (ride.gpsLocked && !_gpsWasLocked && ride.navigating) _follow = true;
     _gpsWasLocked = ride.gpsLocked;
     if (ride.pumpFit != _seenPumps && ride.pumps.isNotEmpty && _fit(ride.pumps.map((pump) => pump.point).toList())) {
       _seenPumps = ride.pumpFit;
       _follow = false;
     }
-    if (ride.routeFit != _seenRoute && ride.routes.isNotEmpty) {
-      final chosen = ride.routes[ride.selectedRoute.clamp(0, ride.routes.length - 1)];
-      if (_fit(chosen.points)) {
+    final focus = _focusPoints();
+    if (ride.routeFit != _seenRoute && focus.length >= 2) {
+      if (_fit(focus)) {
         _seenRoute = ride.routeFit;
         _follow = false;
       }
@@ -94,15 +95,29 @@ class _RideMapState extends State<RideMap> {
       _follow = false;
       _showWidePlan();
     }
-    if (_ready && _follow && !ride.planning) {
-      if (ride.navigating) {
-        _moveTo(ride.you, zoom: 17, bearing: ride.bearing, tilt: 50);
-      } else {
-        _moveTo(ride.you);
-      }
+    if (_ready && _follow && ride.navigating) {
+      _moveTo(ride.you, zoom: 17, bearing: ride.bearing, tilt: 50);
     }
     if (kIsWeb) _ensureArrow(((_screenHeading() / 5).round() * 5) % 360);
     setState(() {});
+  }
+
+  List<LatLng> _focusPoints() {
+    if (ride.planning && ride.roadFitsDay && ride.routes.isNotEmpty) {
+      return ride.routes[ride.selectedRoute.clamp(0, ride.routes.length - 1)].points;
+    }
+    final day = ride.shownRoute;
+    if (day.length >= 2) return day;
+    return const [];
+  }
+
+  void _frameRoute() {
+    final focus = _focusPoints();
+    if (focus.length < 2) return;
+    if (_fit(focus)) {
+      _seenRoute = ride.routeFit;
+      _follow = false;
+    }
   }
 
   bool _fit(List<LatLng> points) {
@@ -306,7 +321,7 @@ class _RideMapState extends State<RideMap> {
         icon: _fuelIcon ?? gmaps.BitmapDescriptor.defaultMarkerWithHue(gmaps.BitmapDescriptor.hueRose),
       ));
     }
-    if (ride.routes.isNotEmpty) {
+    if (ride.routes.isNotEmpty && ride.roadFitsDay) {
       final chosen = ride.routes[ride.selectedRoute.clamp(0, ride.routes.length - 1)];
       final end = chosen.points.last;
       markers.add(gmaps.Marker(
@@ -362,18 +377,7 @@ class _RideMapState extends State<RideMap> {
   }
 
   Set<gmaps.Polyline> _googleLines() {
-    if (ride.routes.isEmpty) {
-      if (ride.planning) return {};
-      return {
-        gmaps.Polyline(
-          polylineId: const gmaps.PolylineId('route'),
-          color: const Color(0xFF2563EB),
-          width: 5,
-          points: [for (final point in RideController.route) _g(point)],
-        ),
-      };
-    }
-    if (ride.navigating) {
+    if (ride.navigating && ride.routes.isNotEmpty && (ride.roadFitsDay || !ride.roadFitsSomeDay)) {
       final chosen = ride.routes[ride.selectedRoute.clamp(0, ride.routes.length - 1)];
       return {
         gmaps.Polyline(
@@ -384,36 +388,52 @@ class _RideMapState extends State<RideMap> {
         ),
       };
     }
-    return {
-      for (var i = 0; i < ride.routes.length; i++)
+    if (ride.planning && ride.roadFitsDay && ride.routes.isNotEmpty) {
+      return {
+        for (var i = 0; i < ride.routes.length; i++)
+          gmaps.Polyline(
+            polylineId: gmaps.PolylineId('drive-$i'),
+            color: i == ride.selectedRoute ? const Color(0xFF1D4ED8) : const Color(0xFF94A3B8),
+            width: i == ride.selectedRoute ? 6 : 4,
+            zIndex: i == ride.selectedRoute ? 2 : 1,
+            consumeTapEvents: true,
+            onTap: () => ride.selectRoute(i),
+            points: [for (final point in ride.routes[i].points) _g(point)],
+          ),
+      };
+    }
+    final day = ride.shownRoute;
+    if (day.length >= 2) {
+      return {
         gmaps.Polyline(
-          polylineId: gmaps.PolylineId('drive-$i'),
-          color: i == ride.selectedRoute ? const Color(0xFF1D4ED8) : const Color(0xFF94A3B8),
-          width: i == ride.selectedRoute ? 6 : 4,
-          zIndex: i == ride.selectedRoute ? 2 : 1,
-          consumeTapEvents: true,
-          onTap: () => ride.selectRoute(i),
-          points: [for (final point in ride.routes[i].points) _g(point)],
+          polylineId: const gmaps.PolylineId('day'),
+          color: const Color(0xFF1D4ED8),
+          width: 5,
+          points: [for (final point in day) _g(point)],
         ),
-    };
+      };
+    }
+    return {};
   }
 
   List<Polyline> _mapLines() {
-    if (ride.routes.isEmpty) {
-      if (ride.planning) return [];
+    if (ride.navigating && ride.routes.isNotEmpty && (ride.roadFitsDay || !ride.roadFitsSomeDay)) {
+      final chosen = ride.routes[ride.selectedRoute.clamp(0, ride.routes.length - 1)];
+      return [Polyline(points: chosen.points, color: const Color(0xFF1D4ED8), strokeWidth: 5)];
+    }
+    if (ride.planning && ride.roadFitsDay && ride.routes.isNotEmpty) {
       return [
-        Polyline(points: RideController.route, color: const Color(0xFF1E3A8A), strokeWidth: 6),
-        Polyline(points: RideController.route, color: const Color(0xFF2563EB), strokeWidth: 3),
+        for (var i = 0; i < ride.routes.length; i++)
+          Polyline(
+            points: ride.routes[i].points,
+            color: i == ride.selectedRoute ? const Color(0xFF1D4ED8) : const Color(0xFF94A3B8),
+            strokeWidth: i == ride.selectedRoute ? 5 : 3,
+          ),
       ];
     }
-    return [
-      for (var i = 0; i < ride.routes.length; i++)
-        Polyline(
-          points: ride.routes[i].points,
-          color: i == ride.selectedRoute ? const Color(0xFF1D4ED8) : const Color(0xFF94A3B8),
-          strokeWidth: i == ride.selectedRoute ? 5 : 3,
-        ),
-    ];
+    final day = ride.shownRoute;
+    if (day.length < 2) return [];
+    return [Polyline(points: day, color: const Color(0xFF1D4ED8), strokeWidth: 5)];
   }
 
   Widget _googleMap(SosFix? sos) {
@@ -422,10 +442,9 @@ class _RideMapState extends State<RideMap> {
       onMapCreated: (controller) {
         _google = controller;
         _ready = true;
+        _frameRoute();
       },
-      onTap: (point) {
-        if (ride.picking) ride.dropHalt(LatLng(point.latitude, point.longitude));
-      },
+      onTap: (point) => _onMapTap(LatLng(point.latitude, point.longitude)),
       onCameraMove: (position) => _cameraBearing = position.bearing,
       onCameraMoveStarted: () {
         if (!_programmatic) _follow = false;
@@ -452,10 +471,11 @@ class _RideMapState extends State<RideMap> {
           options: MapOptions(
             initialCenter: ride.you,
             initialZoom: RideController.overviewZoom,
-            onMapReady: () => _ready = true,
-            onTap: (_, point) {
-              if (ride.picking) ride.dropHalt(point);
+            onMapReady: () {
+              _ready = true;
+              _frameRoute();
             },
+            onTap: (_, point) => _onMapTap(point),
             onPositionChanged: (_, hasGesture) {
               if (hasGesture) _follow = false;
             },
@@ -514,32 +534,32 @@ class _RideMapState extends State<RideMap> {
             ),
           ],
         ),
-        if (!ride.planning && ride.navigating)
+        if (ride.planning)
           Positioned(
             left: 8,
-            right: 8,
+            right: 108,
+            top: 8,
+            child: PointerInterceptor(child: _PlanSearch(ride: ride)),
+          )
+        else if (ride.navigating)
+          Positioned(
+            left: 8,
+            right: 108,
             top: 8,
             child: _NavBanner(ride: ride),
           )
-        else if (!ride.planning)
+        else
           Positioned(
             left: 8,
-            right: 8,
+            right: 108,
             top: 8,
             child: PointerInterceptor(child: _DirectionsSearch(ride: ride)),
           ),
-        if (ride.planning && ride.picking)
-          const Positioned(
-            left: 8,
-            top: 8,
-            child: DecoratedBox(
-              decoration: BoxDecoration(color: Color(0xFF0F172A), borderRadius: BorderRadius.all(Radius.circular(16))),
-              child: Padding(
-                padding: EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                child: Text('Tap the road', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 12)),
-              ),
-            ),
-          ),
+        Positioned(
+          right: 8,
+          top: 8,
+          child: PointerInterceptor(child: _dayBadge(ride)),
+        ),
         if (!ride.planning && !ride.navigating)
         Positioned(
           left: 8,
@@ -554,12 +574,18 @@ class _RideMapState extends State<RideMap> {
                 icon: ride.showOthers ? Icons.visibility_off : Icons.visibility,
               ),
               _chip(
-                ride.gpsSeeking ? 'GPS…' : (ride.gpsFix == null ? 'GPS off' : 'GPS live'),
+                ride.gpsSeeking ? 'GPS…' : (ride.gpsLocked ? 'GPS live' : 'GPS off'),
                 ride.requestGps,
               ),
             ],
           ),
         ),
+        if (!ride.planning && !ride.gpsLocked && !ride.ended)
+          Positioned(
+            left: 8,
+            top: ride.navigating ? 64 : (ride.gpsReason.isEmpty ? 108 : 148),
+            child: PointerInterceptor(child: _note('Tap the map to set where you are')),
+          ),
         if (!ride.planning && ride.gpsReason.isNotEmpty)
           Positioned(
             left: 8,
@@ -573,7 +599,7 @@ class _RideMapState extends State<RideMap> {
             bottom: 8,
             child: _NavFooter(ride: ride),
           )
-        else if (ride.routes.isNotEmpty)
+        else if (ride.routes.isNotEmpty && ride.roadFitsDay)
           Positioned(
             left: 8,
             right: 72,
@@ -601,7 +627,7 @@ class _RideMapState extends State<RideMap> {
         if (!ride.planning)
         Positioned(
           right: 12,
-          bottom: ride.navigating ? 58 : (ride.routes.isNotEmpty ? 156 : 16),
+          bottom: ride.navigating ? 58 : (ride.routes.isNotEmpty && ride.roadFitsDay ? 156 : 16),
           child: Semantics(
             button: true,
             label: 'Recenter',
@@ -667,6 +693,21 @@ class _RideMapState extends State<RideMap> {
     );
   }
 
+  Widget _dayBadge(RideController ride) {
+    final day = ride.planning ? ride.planDay : ride.ridingDay;
+    final total = ride.planning ? ride.draftDays : ride.tripDays;
+    final label = total > 1 ? 'Day $day of $total' : 'Day $day';
+    return Material(
+      color: Colors.white,
+      elevation: 2,
+      borderRadius: BorderRadius.circular(24),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+        child: Text(label, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13)),
+      ),
+    );
+  }
+
   Widget _chip(String label, VoidCallback onTap, {IconData? icon}) {
     return Material(
       color: Colors.white,
@@ -686,6 +727,35 @@ class _RideMapState extends State<RideMap> {
         ),
       ),
     );
+  }
+
+  void _onMapTap(LatLng point) {
+    if (ride.picking) {
+      ride.dropHalt(point);
+      return;
+    }
+    if (!ride.gpsLocked && !ride.planning) unawaited(_offerPin(point));
+  }
+
+  Future<void> _offerPin(LatLng point) async {
+    if (_askingPin || !mounted || ride.gpsLocked || ride.planning || ride.ended) return;
+    _askingPin = true;
+    final when = TimeOfDay.now().format(context);
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => PointerInterceptor(
+        child: AlertDialog(
+          title: const Text('Set your location?'),
+          content: Text('Mark this spot as where you are at $when.'),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+            TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Set location')),
+          ],
+        ),
+      ),
+    );
+    _askingPin = false;
+    if (ok == true && mounted) ride.placeYou(point);
   }
 
   Widget _note(String text) {
@@ -816,6 +886,138 @@ class _DirectionsSearchState extends State<_DirectionsSearch> {
                         _text.text = hit.name;
                         _sig = '';
                         ride.choosePlace(hit);
+                        FocusScope.of(context).unfocus();
+                      },
+                    ),
+                ],
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _PlanSearch extends StatefulWidget {
+  const _PlanSearch({required this.ride});
+
+  final RideController ride;
+
+  @override
+  State<_PlanSearch> createState() => _PlanSearchState();
+}
+
+class _PlanSearchState extends State<_PlanSearch> {
+  final TextEditingController _text = TextEditingController();
+  String _sig = '';
+
+  RideController get ride => widget.ride;
+
+  @override
+  void initState() {
+    super.initState();
+    ride.addListener(_sync);
+  }
+
+  @override
+  void didUpdateWidget(_PlanSearch oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.ride != ride) {
+      oldWidget.ride.removeListener(_sync);
+      ride.addListener(_sync);
+    }
+  }
+
+  @override
+  void dispose() {
+    ride.removeListener(_sync);
+    _text.dispose();
+    super.dispose();
+  }
+
+  void _sync() {
+    if (!mounted) return;
+    final sig = '${ride.planSlot}|${ride.planDay}|${ride.planNote}|${ride.planHits.map((hit) => hit.placeId).join()}';
+    if (sig == _sig) return;
+    _sig = sig;
+    setState(() {});
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final hint = switch (ride.planSlot) {
+      PlanSlot.start => 'Search the start',
+      PlanSlot.finish => 'Search the finish',
+      PlanSlot.dayEnd => 'Search day ${ride.planDay} end',
+      PlanSlot.stop => 'Search a day ${ride.planDay} stop',
+    };
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Material(
+          color: Colors.white,
+          elevation: 2,
+          borderRadius: BorderRadius.circular(24),
+          child: TextField(
+            controller: _text,
+            keyboardType: TextInputType.text,
+            textInputAction: TextInputAction.search,
+            style: const TextStyle(fontSize: 16),
+            decoration: InputDecoration(
+              hintText: hint,
+              isDense: true,
+              prefixIcon: const Icon(Icons.search, size: 20),
+              suffixIcon: _text.text.isEmpty
+                  ? null
+                  : IconButton(
+                      tooltip: 'Clear',
+                      onPressed: () {
+                        _text.clear();
+                        ride.lookUpPlan('');
+                        setState(() {});
+                      },
+                      icon: const Icon(Icons.close, size: 18),
+                    ),
+              border: InputBorder.none,
+              contentPadding: const EdgeInsets.symmetric(vertical: 12),
+            ),
+            onChanged: (value) {
+              setState(() {});
+              ride.lookUpPlan(value);
+            },
+          ),
+        ),
+        if (ride.planNote.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Material(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(12),
+              child: Padding(
+                padding: const EdgeInsets.all(10),
+                child: Text(ride.planNote, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12)),
+              ),
+            ),
+          ),
+        if (ride.planHits.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Material(
+              color: Colors.white,
+              elevation: 3,
+              borderRadius: BorderRadius.circular(16),
+              child: Column(
+                children: [
+                  for (final hit in ride.planHits.take(4))
+                    ListTile(
+                      dense: true,
+                      leading: const Icon(Icons.place_outlined, size: 18),
+                      title: Text(hit.name, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14)),
+                      subtitle: hit.detail.isEmpty ? null : Text(hit.detail, maxLines: 1, overflow: TextOverflow.ellipsis),
+                      onTap: () {
+                        _text.text = hit.name;
+                        _sig = '';
+                        ride.choosePlanPlace(hit);
                         FocusScope.of(context).unfocus();
                       },
                     ),

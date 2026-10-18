@@ -49,7 +49,7 @@ void main() {
     final you = ride.mapRiders.firstWhere((rider) => rider.you).point;
     ride.tick(const Duration(seconds: 1));
     expect(ride.mapRiders.any((rider) => rider.id == 'mate'), isFalse);
-    expect(ride.mapRiders.firstWhere((rider) => rider.you).point, isNot(you));
+    expect(ride.mapRiders.firstWhere((rider) => rider.you).point, you);
   });
 
   test('dismissing an SOS keeps that same alert from coming back', () {
@@ -74,6 +74,68 @@ void main() {
     expect(ride.visibleSos?.at, alert.at.add(const Duration(seconds: 1)));
   });
 
+  test('a map pin sets location once and the ride does not move it', () {
+    final ride = RideController(network: false, clock: () => DateTime(2026, 10, 14, 8));
+    ride.routes = [
+      const RouteChoice(
+        summary: 'NH48',
+        duration: '1 hr',
+        distance: '40 km',
+        points: [LatLng(18.5, 73.8), LatLng(18.9, 73.9)],
+      ),
+    ];
+    ride.navigating = true;
+    const pin = LatLng(18.52, 73.82);
+    ride.placeYou(pin);
+    ride.tick(const Duration(minutes: 5));
+    expect(ride.gpsLocked, isFalse);
+    expect(ride.you.latitude, pin.latitude);
+    expect(ride.you.longitude, pin.longitude);
+  });
+
+  test('the map line follows the current day', () {
+    final ride = RideController(network: false, clock: () => DateTime(2026, 10, 18));
+    ride.tripDays = 2;
+    ride.startPoint = const LatLng(20.01, 73.79);
+    ride.finishPoint = const LatLng(19.81, 73.61);
+    ride.halts = const [
+      RideHalt(id: 's', name: 'Narayangaon', point: LatLng(19.12, 73.90), day: 1, kind: HaltKind.stop),
+      RideHalt(id: 'e', name: 'Nashik', point: LatLng(20.01, 73.79), day: 1, kind: HaltKind.dayEnd),
+    ];
+    expect(ride.shownRoute.map((point) => point.latitude), [20.01, 19.12, 20.01]);
+
+    ride.routes = const [
+      RouteChoice(
+        summary: 'NH848',
+        duration: '1 hr',
+        distance: '33 km',
+        points: [LatLng(20.01, 73.79), LatLng(19.90, 73.70), LatLng(19.81, 73.61)],
+      ),
+    ];
+    expect(ride.shownRoute.map((point) => point.latitude), [20.01, 19.12, 20.01]);
+    expect(ride.roadFitsDay, isFalse);
+
+    ride.ridingDay = 2;
+    expect(ride.shownRoute.length, 3);
+    expect(ride.shownRoute.last.latitude, 19.81);
+  });
+
+  test('a quiet rider stays in the pack', () {
+    final clock = DateTime(2026, 10, 18, 1);
+    final ride = RideController(network: false, clock: () => clock);
+    ride.remote['kk'] = RemoteRider(
+      id: 'kk',
+      name: 'KK',
+      lat: 18.37,
+      lng: 73.85,
+      updatedAt: clock.subtract(const Duration(hours: 6)),
+    );
+    final row = ride.packRows.firstWhere((row) => row.name == 'KK');
+    expect(row.online, isFalse);
+    expect(ride.mapRiders.map((rider) => rider.name), contains('KK'));
+    expect(ride.joinedPhones.map((phone) => phone.label), contains('KK'));
+  });
+
   test('a GPS lock stays on the real fix instead of the simulator', () {
     final ride = RideController(network: false, clock: () => DateTime(2026, 10, 14, 8));
     const home = LatLng(19.07, 72.87);
@@ -88,13 +150,17 @@ void main() {
     expect(ride.mapRiders.firstWhere((rider) => rider.you).point.latitude, home.latitude);
   });
 
-  test('only an admin can open the planner', () {
+  test('generating a code makes you the admin of that ride', () {
     final ride = RideController(network: false, clock: () => DateTime(2026, 10, 14, 8));
-    ride.beginPlanning();
-    expect(ride.planning, isFalse);
-    ride.admin = true;
+    ride.generateCode();
+    expect(ride.admin, isTrue);
     ride.beginPlanning();
     expect(ride.planning, isTrue);
+    ride.joinCode('ZEN-2222');
+    expect(ride.admin, isFalse);
+    ride.planning = false;
+    ride.beginPlanning();
+    expect(ride.planning, isFalse);
   });
 
   test('an empty pack is only the rider who joined', () {

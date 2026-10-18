@@ -272,8 +272,18 @@ out center 160;
     return profile;
   }
 
-  Future<void> setRideCode(String uid, String rideCode) async {
-    await _db.collection('users').doc(uid).set({'rideCode': rideCode}, SetOptions(merge: true));
+  Future<void> setMembership(String uid, {required String rideCode, required String role}) async {
+    await _db.collection('users').doc(uid).set({'rideCode': rideCode, 'role': role}, SetOptions(merge: true));
+  }
+
+  Future<void> claimRide(String code, String uid) async {
+    await _db.collection('rides').doc(code).set({'adminId': uid}, SetOptions(merge: true));
+  }
+
+  Future<String?> rideAdmin(String code) async {
+    final doc = await _db.collection('rides').doc(code).get();
+    final id = doc.data()?['adminId'];
+    return id is String && id.isNotEmpty ? id : null;
   }
 }
 

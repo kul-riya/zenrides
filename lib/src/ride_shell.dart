@@ -1,6 +1,5 @@
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
-import 'package:pointer_interceptor/pointer_interceptor.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'ride_controller.dart';
@@ -63,10 +62,7 @@ class HudPage extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(10, 8, 10, 0),
           child: Column(
             children: [
-              if (ride.planning)
-                SizedBox(height: 390, child: PointerInterceptor(child: const _PlannerCard()))
-              else
-                const _HeadlineCard(),
+              if (ride.planning) const _PlannerCard() else const _HeadlineCard(),
               if (!ride.planning && ride.notice != null) ...[
                 const SizedBox(height: 8),
                 _NoticeCard(notice: ride.notice!),
@@ -127,7 +123,13 @@ class _HeadlineCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  ride.ended ? 'Ride ended' : 'Follow the highway for ${ride.routeKm.toStringAsFixed(1)} km',
+                  ride.ended
+                      ? 'Ride ended'
+                      : ride.routeKm > 0
+                          ? 'Follow the route for ${ride.routeKm.toStringAsFixed(1)} km'
+                          : ride.gpsFix != null
+                              ? 'Location set on the map'
+                              : 'Waiting for a GPS fix',
                   style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15),
                 ),
                 Text(
@@ -307,213 +309,195 @@ class _PlannerCard extends StatefulWidget {
   State<_PlannerCard> createState() => _PlannerCardState();
 }
 
-class _PlannerCardState extends State<_PlannerCard> {
-  final TextEditingController _search = TextEditingController();
+class _PlannerCardState extends State<_PlannerCard> with TickerProviderStateMixin {
+  TabController? _days;
+  final List<TabController> _retire = [];
+  bool _slotOpen = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final ride = RideScope.of(context);
+    final count = ride.draftDays;
+    final index = (ride.planDay - 1).clamp(0, count - 1);
+    final current = _days;
+    if (current == null || current.length != count) {
+      current?.removeListener(_onDayTab);
+      final next = TabController(length: count, vsync: this, initialIndex: index);
+      next.addListener(_onDayTab);
+      _days = next;
+      if (current != null) {
+        _retire.add(current);
+        WidgetsBinding.instance.addPostFrameCallback((_) => _dropRetired());
+      }
+      return;
+    }
+    if (current.index != index) current.index = index;
+  }
+
+  void _onDayTab() {
+    final days = _days;
+    if (days == null || days.indexIsChanging) return;
+    final ride = RideScope.of(context);
+    final day = days.index + 1;
+    if (ride.planDay != day) ride.selectPlanDay(day);
+  }
+
+  void _dropRetired() {
+    if (!mounted) return;
+    for (final old in _retire) {
+      old.dispose();
+    }
+    _retire.clear();
+  }
 
   @override
   void dispose() {
-    _search.dispose();
+    _days?.removeListener(_onDayTab);
+    _days?.dispose();
+    for (final old in _retire) {
+      old.dispose();
+    }
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     final ride = RideScope.of(context);
-    final slotLabel = switch (ride.planSlot) {
-      PlanSlot.start => 'the start',
-      PlanSlot.finish => 'the finish',
-      PlanSlot.dayEnd => 'day ${ride.planDay} end',
-      PlanSlot.stop => 'a day ${ride.planDay} stop',
-    };
-    return _card(
-      child: Column(
+    final days = _days;
+    final placed = _placed(ride);
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(16),
+      clipBehavior: Clip.antiAlias,
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Expanded(
-            child: ListView(
-        padding: EdgeInsets.zero,
-        children: [
-          const Text('Plan the ride', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
-          const SizedBox(height: 4),
-          Text(
-            'Set the days, the start, and the finish. Each day has an end point and stops in between. Search, or press Select on map and tap the road. This drop is for $slotLabel.',
-            style: const TextStyle(color: Color(0xFF64748B), fontSize: 12),
-          ),
-          const SizedBox(height: 8),
           Row(
             children: [
               const Text('Days', style: TextStyle(fontWeight: FontWeight.w800)),
               IconButton(
+                visualDensity: VisualDensity.compact,
                 onPressed: ride.draftDays > 1 ? () => ride.setDraftDays(ride.draftDays - 1) : null,
                 icon: const Icon(Icons.remove_circle_outline),
               ),
               Text('${ride.draftDays}', style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
               IconButton(
+                visualDensity: VisualDensity.compact,
                 onPressed: ride.draftDays < 14 ? () => ride.setDraftDays(ride.draftDays + 1) : null,
                 icon: const Icon(Icons.add_circle_outline),
               ),
+              const Spacer(),
+              TextButton(onPressed: ride.cancelPlanning, child: const Text('Cancel')),
+              FilledButton(onPressed: ride.savePlan, child: const Text('Save')),
             ],
           ),
-          Wrap(
-            spacing: 6,
-            runSpacing: 6,
-            children: [
-              for (var day = 1; day <= ride.draftDays; day++)
-                ChoiceChip(
-                  label: Text('Day $day'),
-                  selected: ride.planDay == day,
-                  onSelected: (_) => ride.selectPlanDay(day),
-                ),
-            ],
-          ),
-          const SizedBox(height: 6),
-          Wrap(
-            spacing: 6,
-            runSpacing: 6,
-            children: [
-              ChoiceChip(label: const Text('Start'), selected: ride.planSlot == PlanSlot.start, onSelected: (_) => ride.selectPlanSlot(PlanSlot.start)),
-              ChoiceChip(label: const Text('Finish'), selected: ride.planSlot == PlanSlot.finish, onSelected: (_) => ride.selectPlanSlot(PlanSlot.finish)),
-              ChoiceChip(label: const Text('Day end'), selected: ride.planSlot == PlanSlot.dayEnd, onSelected: (_) => ride.selectPlanSlot(PlanSlot.dayEnd)),
-              ChoiceChip(label: const Text('Stop'), selected: ride.planSlot == PlanSlot.stop, onSelected: (_) => ride.selectPlanSlot(PlanSlot.stop)),
-            ],
-          ),
-          const SizedBox(height: 8),
-          if (ride.draftStart != null)
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              title: Text(ride.draftStartName.isEmpty ? 'Start' : ride.draftStartName),
-              subtitle: const Text('Start'),
-              trailing: IconButton(onPressed: () => ride.removeDraftHalt('plan-start'), icon: const Icon(Icons.close)),
-            ),
-          if (ride.draftFinish != null)
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              title: Text(ride.draftFinishName.isEmpty ? 'Finish' : ride.draftFinishName),
-              subtitle: const Text('Finish'),
-              trailing: IconButton(onPressed: () => ride.removeDraftHalt('plan-finish'), icon: const Icon(Icons.close)),
-            ),
-          for (var day = 1; day <= ride.draftDays; day++) ...[
-            if (ride.dayEnd(day, draft: true) != null || ride.dayStops(day, draft: true).isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.only(top: 6),
-                child: Text('Day $day', style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13)),
+          if (days != null)
+            Material(
+              color: Colors.transparent,
+              child: TabBar(
+                controller: days,
+                isScrollable: true,
+                tabAlignment: TabAlignment.start,
+                tabs: [for (var day = 1; day <= ride.draftDays; day++) Tab(text: 'Day $day')],
               ),
-            if (ride.dayEnd(day, draft: true) case final end?)
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                title: Text(end.name),
-                subtitle: const Text('Day end'),
-                trailing: IconButton(onPressed: () => ride.removeDraftHalt(end.id), icon: const Icon(Icons.close)),
-              ),
-            for (final stop in ride.dayStops(day, draft: true))
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                title: Text(stop.name),
-                subtitle: const Text('Stop'),
-                trailing: IconButton(onPressed: () => ride.removeDraftHalt(stop.id), icon: const Icon(Icons.close)),
-              ),
-          ],
-          ],
-        ),
-      ),
-          const SizedBox(height: 8),
-          TextField(
-            controller: _search,
-            keyboardType: TextInputType.text,
-            textInputAction: TextInputAction.search,
-            style: const TextStyle(fontSize: 16),
-            decoration: const InputDecoration(
-              isDense: true,
-              hintText: 'Search a place',
-              prefixIcon: Icon(Icons.search, size: 18),
-              border: OutlineInputBorder(),
             ),
-            onChanged: ride.lookUpPlan,
-          ),
-          if (ride.planNote.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(top: 6),
-              child: Text(ride.planNote, style: const TextStyle(fontSize: 12, color: Color(0xFF64748B))),
-            ),
-          for (final hit in ride.planHits.take(3))
-            ListTile(
-              dense: true,
-              contentPadding: EdgeInsets.zero,
-              visualDensity: VisualDensity.compact,
-              title: Text(hit.name, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
-              subtitle: hit.detail.isEmpty ? null : Text(hit.detail, maxLines: 1, overflow: TextOverflow.ellipsis),
-              onTap: () {
-                _search.text = hit.name;
-                ride.choosePlanPlace(hit);
-                FocusScope.of(context).unfocus();
-              },
-            ),
-          if (ride.routes.isNotEmpty) ...[
-            const SizedBox(height: 8),
-            SizedBox(
-              height: 72,
-              child: ListView.separated(
-                scrollDirection: Axis.horizontal,
-                itemCount: ride.routes.length,
-                separatorBuilder: (_, _) => const SizedBox(width: 8),
-                itemBuilder: (context, index) {
-                  final route = ride.routes[index];
-                  final selected = index == ride.selectedRoute;
-                  return Material(
-                    color: selected ? const Color(0xFF0F172A) : const Color(0xFFF1F5F9),
-                    borderRadius: BorderRadius.circular(14),
-                    child: InkWell(
-                      borderRadius: BorderRadius.circular(14),
-                      onTap: () => ride.selectRoute(index),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Text(
-                              route.duration.isEmpty ? 'Route ${index + 1}' : route.duration,
-                              style: TextStyle(
-                                fontWeight: FontWeight.w900,
-                                color: selected ? Colors.white : const Color(0xFF0F172A),
-                              ),
-                            ),
-                            Text(
-                              '${route.distance} · ${route.summary}',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.w700,
-                                color: selected ? Colors.white70 : const Color(0xFF475569),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
+          InkWell(
+            onTap: () => setState(() => _slotOpen = !_slotOpen),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Placing ${_slotName(ride.planSlot, ride.planDay)}',
+                      style: const TextStyle(fontWeight: FontWeight.w800),
                     ),
-                  );
+                  ),
+                  Icon(_slotOpen ? Icons.expand_less : Icons.expand_more),
+                ],
+              ),
+            ),
+          ),
+          if (_slotOpen)
+            for (final slot in PlanSlot.values)
+              ListTile(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                visualDensity: VisualDensity.compact,
+                selected: ride.planSlot == slot,
+                title: Text(_slotName(slot, ride.planDay)),
+                onTap: () {
+                  ride.selectPlanSlot(slot);
+                  setState(() => _slotOpen = false);
                 },
               ),
-            ),
-          ],
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              FilledButton(
-                onPressed: () => ride.armPick(!ride.picking),
-                child: Text(ride.picking ? 'Tap the map' : 'Select on map'),
+          if (placed.isNotEmpty)
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 132),
+              child: ListView(
+                shrinkWrap: true,
+                padding: EdgeInsets.zero,
+                children: placed,
               ),
-              OutlinedButton(onPressed: ride.savePlan, child: const Text('Save')),
-              TextButton(onPressed: ride.cancelPlanning, child: const Text('Cancel')),
-            ],
+            ),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: FilledButton.tonal(
+              onPressed: () => ride.armPick(!ride.picking),
+              child: Text(ride.picking ? 'Tap the map' : 'Select on map'),
+            ),
           ),
         ],
+        ),
       ),
     );
   }
+
+  List<Widget> _placed(RideController ride) {
+    final tiles = <Widget>[];
+    if (ride.draftStart != null) {
+      tiles.add(_haltTile(
+        ride.draftStartName.isEmpty ? 'Start' : ride.draftStartName,
+        'Start',
+        () => ride.removeDraftHalt('plan-start'),
+      ));
+    }
+    if (ride.draftFinish != null) {
+      tiles.add(_haltTile(
+        ride.draftFinishName.isEmpty ? 'Finish' : ride.draftFinishName,
+        'Finish',
+        () => ride.removeDraftHalt('plan-finish'),
+      ));
+    }
+    final end = ride.dayEnd(ride.planDay, draft: true);
+    if (end != null) tiles.add(_haltTile(end.name, 'Day end', () => ride.removeDraftHalt(end.id)));
+    for (final stop in ride.dayStops(ride.planDay, draft: true)) {
+      tiles.add(_haltTile(stop.name, 'Stop', () => ride.removeDraftHalt(stop.id)));
+    }
+    return tiles;
+  }
+
+  Widget _haltTile(String title, String kind, VoidCallback onRemove) {
+    return ListTile(
+      dense: true,
+      contentPadding: EdgeInsets.zero,
+      visualDensity: VisualDensity.compact,
+      title: Text(title, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+      subtitle: Text(kind),
+      trailing: IconButton(onPressed: onRemove, icon: const Icon(Icons.close)),
+    );
+  }
 }
+
+String _slotName(PlanSlot slot, int day) => switch (slot) {
+      PlanSlot.start => 'Start',
+      PlanSlot.finish => 'Finish',
+      PlanSlot.dayEnd => 'Day $day end',
+      PlanSlot.stop => 'Day $day stop',
+    };
 
 class _BroadcastRow extends StatefulWidget {
   const _BroadcastRow();

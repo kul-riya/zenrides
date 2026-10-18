@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "126377853304",
+    "project_id": "myzenrides",
+    "storage_bucket": "myzenrides.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:126377853304:android:072811594c22b7b14fc88d",
+        "android_client_info": {
+          "package_name": "com.zenrides.zen"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyA8JL4wsxzPAD2QFsHd4EWIoWvO8m0LBXM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
