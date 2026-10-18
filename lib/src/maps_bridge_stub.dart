@@ -5,6 +5,8 @@ import 'ride_api.dart';
 
 const bool mapsAvailable = false;
 
+const bool mapsScriptReady = false;
+
 Future<void> loadMaps() async {}
 
 Future<List<FuelPump>> nearbyFuel(LatLng here) async => const [];

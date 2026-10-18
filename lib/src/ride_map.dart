@@ -9,6 +9,7 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart' as gmaps;
 import 'package:latlong2/latlong.dart';
 
+import 'maps_bridge.dart';
 import 'ride_api.dart';
 import 'ride_controller.dart';
 
@@ -463,7 +464,7 @@ class _RideMapState extends State<RideMap> {
     final sos = ride.visibleSos;
     return Stack(
       children: [
-        if (kIsWeb)
+        if (kIsWeb && MapsBridge.scriptReady)
           _googleMap(sos)
         else
         FlutterMap(

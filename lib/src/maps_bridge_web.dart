@@ -9,6 +9,10 @@ import 'ride_api.dart';
 
 const bool mapsAvailable = true;
 
+/// True only after the Maps JavaScript API has loaded. Search and roads
+/// still work through the page script when this stays false.
+bool mapsScriptReady = false;
+
 @JS('document.createElement')
 external JSObject _createElement(JSString tag);
 
@@ -23,20 +27,19 @@ extension type _Script(JSObject _) implements JSObject {
 
 Future<void> loadMaps() {
   final key = RideApi.mapsKey;
-  if (key.isEmpty) {
-    throw StateError('MAPS_API_KEY missing. Run with --dart-define-from-file=.env');
-  }
+  if (key.isEmpty) return Future<void>.value();
   final done = Completer<void>();
   final script = _Script(_createElement('script'.toJS));
   script.onload = (() {
+    mapsScriptReady = true;
     if (!done.isCompleted) done.complete();
   }).toJS;
   script.onerror = (() {
-    if (!done.isCompleted) done.completeError(StateError('Google Maps failed to load'));
+    if (!done.isCompleted) done.complete();
   }).toJS;
   script.src = 'https://maps.googleapis.com/maps/api/js?key=$key'.toJS;
   _appendChild(script);
-  return done.future;
+  return done.future.timeout(const Duration(seconds: 12), onTimeout: () {});
 }
 
 @JS('zenRidesMaps.nearbyFuel')

@@ -14,13 +14,27 @@ import 'src/ride_shell.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   SemanticsBinding.instance.ensureSemantics();
-  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
-  if (kIsWeb) await MapsBridge.loadMaps();
-  runApp(const ZenRidesApp());
+  var firebaseReady = false;
+  try {
+    await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+    firebaseReady = true;
+  } catch (error, stack) {
+    FlutterError.reportError(FlutterErrorDetails(exception: error, stack: stack, library: 'zenrides'));
+  }
+  if (kIsWeb) {
+    try {
+      await MapsBridge.loadMaps();
+    } catch (error, stack) {
+      FlutterError.reportError(FlutterErrorDetails(exception: error, stack: stack, library: 'zenrides'));
+    }
+  }
+  runApp(ZenRidesApp(firebaseReady: firebaseReady));
 }
 
 class ZenRidesApp extends StatelessWidget {
-  const ZenRidesApp({super.key});
+  const ZenRidesApp({super.key, required this.firebaseReady});
+
+  final bool firebaseReady;
 
   @override
   Widget build(BuildContext context) {
@@ -32,7 +46,31 @@ class ZenRidesApp extends StatelessWidget {
         useMaterial3: true,
         scaffoldBackgroundColor: const Color(0xFFEEF1F5),
       ),
-      home: kIsWeb ? const AuthGate(ready: RideHost()) : const RideHost(),
+      home: !firebaseReady
+          ? const _StartupPage()
+          : kIsWeb
+              ? const AuthGate(ready: RideHost())
+              : const RideHost(),
+    );
+  }
+}
+
+class _StartupPage extends StatelessWidget {
+  const _StartupPage();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Scaffold(
+      body: Center(
+        child: Padding(
+          padding: EdgeInsets.all(28),
+          child: Text(
+            'ZenRides could not reach Firebase. Check the connection, then refresh.',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 16, height: 1.4),
+          ),
+        ),
+      ),
     );
   }
 }

@@ -9,6 +9,8 @@ export 'maps_types.dart';
 class MapsBridge {
   static bool get available => impl.mapsAvailable;
 
+  static bool get scriptReady => impl.mapsScriptReady;
+
   static Future<void> loadMaps() => impl.loadMaps();
 
   static Future<List<FuelPump>> nearbyFuel(LatLng here) => impl.nearbyFuel(here);
