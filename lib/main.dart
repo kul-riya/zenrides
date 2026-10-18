@@ -14,27 +14,37 @@ import 'src/ride_shell.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   SemanticsBinding.instance.ensureSemantics();
-  var firebaseReady = false;
-  try {
-    await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
-    firebaseReady = true;
-  } catch (error, stack) {
-    FlutterError.reportError(FlutterErrorDetails(exception: error, stack: stack, library: 'zenrides'));
-  }
-  if (kIsWeb) {
-    try {
-      await MapsBridge.loadMaps();
-    } catch (error, stack) {
-      FlutterError.reportError(FlutterErrorDetails(exception: error, stack: stack, library: 'zenrides'));
-    }
-  }
-  runApp(ZenRidesApp(firebaseReady: firebaseReady));
+  runApp(const ZenRidesApp());
 }
 
-class ZenRidesApp extends StatelessWidget {
-  const ZenRidesApp({super.key, required this.firebaseReady});
+enum _Boot { opening, ready, failed }
 
-  final bool firebaseReady;
+class ZenRidesApp extends StatefulWidget {
+  const ZenRidesApp({super.key});
+
+  @override
+  State<ZenRidesApp> createState() => _ZenRidesAppState();
+}
+
+class _ZenRidesAppState extends State<ZenRidesApp> {
+  var _boot = _Boot.opening;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_start());
+  }
+
+  Future<void> _start() async {
+    if (kIsWeb) unawaited(MapsBridge.loadMaps());
+    try {
+      await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform).timeout(const Duration(seconds: 8));
+      if (mounted) setState(() => _boot = _Boot.ready);
+    } catch (error, stack) {
+      FlutterError.reportError(FlutterErrorDetails(exception: error, stack: stack, library: 'zenrides'));
+      if (mounted) setState(() => _boot = _Boot.failed);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -46,11 +56,31 @@ class ZenRidesApp extends StatelessWidget {
         useMaterial3: true,
         scaffoldBackgroundColor: const Color(0xFFEEF1F5),
       ),
-      home: !firebaseReady
-          ? const _StartupPage()
-          : kIsWeb
-              ? const AuthGate(ready: RideHost())
-              : const RideHost(),
+      home: switch (_boot) {
+        _Boot.opening => const _OpeningPage(),
+        _Boot.failed => const _StartupPage(),
+        _Boot.ready => kIsWeb ? const AuthGate(ready: RideHost()) : const RideHost(),
+      },
+    );
+  }
+}
+
+class _OpeningPage extends StatelessWidget {
+  const _OpeningPage();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Scaffold(
+      body: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text('Sign in', style: TextStyle(fontSize: 28, fontWeight: FontWeight.w800)),
+            SizedBox(height: 12),
+            Text('Opening ZenRides…'),
+          ],
+        ),
+      ),
     );
   }
 }
