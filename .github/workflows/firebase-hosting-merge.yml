@@ -13,9 +13,12 @@ jobs:
       - uses: actions/checkout@v4
       - run: git clone https://github.com/flutter/flutter.git --depth 1 -b stable
           "$RUNNER_TEMP/flutter" && "$RUNNER_TEMP/flutter/bin/flutter" build web
-          --release --no-web-resources-cdn --output "$GITHUB_WORKSPACE/public"
+          --release --no-web-resources-cdn --pwa-strategy=none
+          --output "$GITHUB_WORKSPACE/public"
           --dart-define=MAPS_API_KEY=${{ secrets.MAPS_API_KEY }}
           --dart-define=FIREBASE_API_KEY=${{ secrets.FIREBASE_API_KEY }}
+          && cp "$GITHUB_WORKSPACE/web/flutter_service_worker.js" "$GITHUB_WORKSPACE/public/flutter_service_worker.js"
+          && cp "$GITHUB_WORKSPACE/web/sw.js" "$GITHUB_WORKSPACE/public/sw.js"
       - uses: FirebaseExtended/action-hosting-deploy@v0
         with:
           repoToken: ${{ secrets.GITHUB_TOKEN }}

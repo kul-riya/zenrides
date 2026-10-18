@@ -463,8 +463,12 @@
   -->
   <script>
     (function () {
+      // Flutter's generated worker reloads every open tab when it activates.
+      // Registering another worker made that happen on every visit.
       if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.register('sw.js').catch(function () {});
+        navigator.serviceWorker.getRegistrations().then(function (registrations) {
+          registrations.forEach(function (registration) { registration.unregister(); });
+        }).catch(function () {});
       }
       var params = new URLSearchParams(location.search);
       var ios = /iPhone|iPad|iPod/.test(navigator.userAgent || '');
