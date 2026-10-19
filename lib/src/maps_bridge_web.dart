@@ -45,11 +45,17 @@ Future<void> loadMaps() {
 @JS('zenRidesMaps.nearbyFuel')
 external JSPromise<JSString> _nearbyFuel(JSNumber lat, JSNumber lng);
 
+@JS('zenRidesMaps.fuelAlong')
+external JSPromise<JSString> _fuelAlong(JSString points);
+
+@JS('zenRidesMaps.tollsAlong')
+external JSPromise<JSString> _tollsAlong(JSString points);
+
 @JS('zenRidesMaps.search')
 external JSPromise<JSString> _search(JSString query, JSNumber lat, JSNumber lng);
 
 @JS('zenRidesMaps.directions')
-external JSPromise<JSString> _directions(JSNumber lat, JSNumber lng, JSString placeId);
+external JSPromise<JSString> _directions(JSNumber lat, JSNumber lng, JSString placeId, JSString via);
 
 @JS('zenRidesMaps.hazards')
 external JSPromise<JSString> _hazards(JSNumber lat, JSNumber lng, JSNumber heading);
@@ -59,11 +65,43 @@ external JSPromise<JSString> _placePoint(JSString placeId);
 
 Future<List<FuelPump>> nearbyFuel(LatLng here) async {
   final raw = (await _nearbyFuel(here.latitude.toJS, here.longitude.toJS).toDart).toDart;
+  return _pumps(raw);
+}
+
+Future<List<FuelPump>> fuelAlong(List<LatLng> road) async {
+  if (road.length < 2) return const [];
+  final raw = (await _fuelAlong(jsonEncode([
+    for (final point in road) {'lat': point.latitude, 'lng': point.longitude},
+  ]).toJS).toDart)
+      .toDart;
+  return _pumps(raw);
+}
+
+Future<List<TollPlaza>> tollsAlong(List<LatLng> road) async {
+  if (road.length < 2) return const [];
+  final raw = (await _tollsAlong(jsonEncode([
+    for (final point in road) {'lat': point.latitude, 'lng': point.longitude},
+  ]).toJS).toDart)
+      .toDart;
   final decoded = jsonDecode(raw);
   if (decoded is! List) return const [];
   return [
     for (final item in decoded)
-      if (item is Map)
+      if (item is Map && item['lat'] is num && item['lng'] is num)
+        TollPlaza(
+          id: '${item['id']}',
+          name: '${item['name']}',
+          point: LatLng((item['lat'] as num).toDouble(), (item['lng'] as num).toDouble()),
+        ),
+  ];
+}
+
+List<FuelPump> _pumps(String raw) {
+  final decoded = jsonDecode(raw);
+  if (decoded is! List) return const [];
+  return [
+    for (final item in decoded)
+      if (item is Map && item['lat'] is num && item['lng'] is num)
         FuelPump(
           id: '${item['id']}',
           name: '${item['name']}',
@@ -87,8 +125,15 @@ Future<List<PlaceHit>> search(String query, LatLng here) async {
   ];
 }
 
-Future<List<RouteChoice>> directions({required LatLng origin, required String placeId}) async {
-  final raw = (await _directions(origin.latitude.toJS, origin.longitude.toJS, placeId.toJS).toDart).toDart;
+Future<List<RouteChoice>> directions({
+  required LatLng origin,
+  required String placeId,
+  List<LatLng> via = const [],
+}) async {
+  final viaJson = jsonEncode([
+    for (final point in via) {'lat': point.latitude, 'lng': point.longitude},
+  ]);
+  final raw = (await _directions(origin.latitude.toJS, origin.longitude.toJS, placeId.toJS, viaJson.toJS).toDart).toDart;
   final decoded = jsonDecode(raw);
   if (decoded is! List) return const [];
   return [
@@ -100,6 +145,7 @@ Future<List<RouteChoice>> directions({required LatLng origin, required String pl
           distance: '${item['distance']}',
           durationSeconds: (item['durationSeconds'] as num?)?.round() ?? 0,
           distanceMeters: (item['distanceMeters'] as num?)?.round() ?? 0,
+          traffic: item['traffic'] == true,
           points: [
             for (final point in (item['points'] as List? ?? const []))
               if (point is Map) LatLng((point['lat'] as num).toDouble(), (point['lng'] as num).toDouble()),

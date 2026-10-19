@@ -57,47 +57,29 @@ class _ZenRidesAppState extends State<ZenRidesApp> {
         scaffoldBackgroundColor: const Color(0xFFEEF1F5),
       ),
       home: switch (_boot) {
-        _Boot.opening => const _OpeningPage(),
-        _Boot.failed => const _StartupPage(),
+        _Boot.opening => const _StartupPage(message: 'Opening ZenRides…'),
+        _Boot.failed => const _StartupPage(message: 'ZenRides could not reach Firebase. Check the connection, then refresh.'),
         _Boot.ready => kIsWeb ? const AuthGate(ready: RideHost()) : const RideHost(),
       },
     );
   }
 }
 
-class _OpeningPage extends StatelessWidget {
-  const _OpeningPage();
-
-  @override
-  Widget build(BuildContext context) {
-    return const Scaffold(
-      body: Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text('Sign in', style: TextStyle(fontSize: 28, fontWeight: FontWeight.w800)),
-            SizedBox(height: 12),
-            Text('Opening ZenRides…'),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
 class _StartupPage extends StatelessWidget {
-  const _StartupPage();
+  const _StartupPage({required this.message});
+
+  final String message;
 
   @override
   Widget build(BuildContext context) {
-    return const Scaffold(
+    return Scaffold(
       body: Center(
         child: Padding(
-          padding: EdgeInsets.all(28),
+          padding: const EdgeInsets.all(28),
           child: Text(
-            'ZenRides could not reach Firebase. Check the connection, then refresh.',
+            message,
             textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 16, height: 1.4),
+            style: const TextStyle(fontSize: 16, height: 1.4),
           ),
         ),
       ),

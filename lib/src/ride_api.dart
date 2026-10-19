@@ -44,6 +44,14 @@ class FuelPump {
   final LatLng point;
 }
 
+class TollPlaza {
+  const TollPlaza({required this.id, required this.name, required this.point});
+
+  final String id;
+  final String name;
+  final LatLng point;
+}
+
 class RideApi {
   RideApi({http.Client? client, FirebaseFirestore? firestore})
       : _client = client ?? http.Client(),
@@ -116,6 +124,18 @@ class RideApi {
       await _db.collection('rides/$code/riders').doc(id).delete();
     } catch (e) {
       throw RideApiException('Could not remove that rider: $e');
+    }
+  }
+
+  Future<void> deleteRideDocument(String code) async {
+    try {
+      final riders = await _db.collection('rides').doc(code).collection('riders').get();
+      for (final doc in riders.docs) {
+        await doc.reference.delete();
+      }
+      await _db.collection('rides').doc(code).delete();
+    } catch (e) {
+      throw RideApiException('Could not delete that ride: $e');
     }
   }
 
@@ -235,6 +255,42 @@ out center 160;
     return _readPumps(response.body);
   }
 
+  Future<List<TollPlaza>> tollsAlong(List<LatLng> points) async {
+    if (points.isEmpty) return const [];
+    var south = points.first.latitude;
+    var north = south;
+    var west = points.first.longitude;
+    var east = west;
+    for (final point in points) {
+      south = south < point.latitude ? south : point.latitude;
+      north = north > point.latitude ? north : point.latitude;
+      west = west < point.longitude ? west : point.longitude;
+      east = east > point.longitude ? east : point.longitude;
+    }
+    const pad = 0.02;
+    final query = '''
+[out:json][timeout:20];
+(
+  node["barrier"="toll_booth"](${south - pad},${west - pad},${north + pad},${east + pad});
+  way["barrier"="toll_booth"](${south - pad},${west - pad},${north + pad},${east + pad});
+  node["highway"="toll_gantry"](${south - pad},${west - pad},${north + pad},${east + pad});
+);
+out center 80;
+''';
+    http.Response? response;
+    for (final server in const [
+      'https://overpass-api.de/api/interpreter',
+      'https://overpass.kumi.systems/api/interpreter',
+    ]) {
+      try {
+        response = await _client.post(Uri.parse(server), body: {'data': query});
+        if (response.statusCode >= 200 && response.statusCode < 300) break;
+      } catch (_) {}
+    }
+    if (response == null || response.statusCode < 200 || response.statusCode >= 300) return const [];
+    return _readTolls(response.body);
+  }
+
   List<FuelPump> _readPumps(String raw) {
     final body = jsonDecode(raw);
     if (body is! Map<String, dynamic>) return const [];
@@ -261,6 +317,36 @@ out center 160;
       ));
     }
     return pumps;
+  }
+
+  List<TollPlaza> _readTolls(String raw) {
+    final body = jsonDecode(raw);
+    if (body is! Map<String, dynamic>) return const [];
+    final elements = body['elements'];
+    if (elements is! List) return const [];
+    final tolls = <TollPlaza>[];
+    for (final element in elements) {
+      if (element is! Map<String, dynamic>) continue;
+      final tags = element['tags'];
+      final tagMap = tags is Map<String, dynamic> ? tags : const <String, dynamic>{};
+      var lat = element['lat'];
+      var lng = element['lon'];
+      final center = element['center'];
+      if ((lat is! num || lng is! num) && center is Map<String, dynamic>) {
+        lat = center['lat'];
+        lng = center['lon'];
+      }
+      if (lat is! num || lng is! num) continue;
+      final name = tagMap['name'] ?? tagMap['ref'] ?? tagMap['operator'];
+      final type = element['type'];
+      final id = element['id'];
+      tolls.add(TollPlaza(
+        id: '$type-$id',
+        name: name is String && name.isNotEmpty ? name : 'Toll naka',
+        point: LatLng(lat.toDouble(), lng.toDouble()),
+      ));
+    }
+    return tolls;
   }
 
   Future<RiderProfile> ensureUser({required String uid, required String name}) async {

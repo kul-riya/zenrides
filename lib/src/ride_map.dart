@@ -27,7 +27,7 @@ class _RideMapState extends State<RideMap> {
   gmaps.GoogleMapController? _google;
   final Map<int, gmaps.BitmapDescriptor> _riderIcons = {};
   gmaps.BitmapDescriptor? _fuelIcon;
-  gmaps.BitmapDescriptor? _hazardIcon;
+  gmaps.BitmapDescriptor? _tollIcon;
   final Map<int, gmaps.BitmapDescriptor> _arrows = {};
   final Set<int> _arrowJobs = {};
   double _cameraBearing = 0;
@@ -49,7 +49,7 @@ class _RideMapState extends State<RideMap> {
     if (kIsWeb) {
       _loadRiderIcons();
       _loadFuelIcon();
-      _loadHazardIcon();
+      _loadTollIcon();
       _ensureArrow(0);
     }
   }
@@ -104,11 +104,13 @@ class _RideMapState extends State<RideMap> {
   }
 
   List<LatLng> _focusPoints() {
-    if (ride.planning && ride.roadFitsDay && ride.routes.isNotEmpty) {
+    if (ride.planning) {
+      final planned = [for (final path in ride.planPaths) ...path.points];
+      if (planned.length >= 2) return planned;
+    }
+    if (ride.showHudRoute) {
       return ride.routes[ride.selectedRoute.clamp(0, ride.routes.length - 1)].points;
     }
-    final day = ride.shownRoute;
-    if (day.length >= 2) return day;
     return const [];
   }
 
@@ -124,6 +126,8 @@ class _RideMapState extends State<RideMap> {
   bool _fit(List<LatLng> points) {
     if (points.length < 2) return false;
     if (kIsWeb && _google == null) return false;
+    final box = context.findRenderObject();
+    if (box is! RenderBox || !box.hasSize || box.size.shortestSide < 80) return false;
     var south = points.first.latitude;
     var north = south;
     var west = points.first.longitude;
@@ -134,6 +138,8 @@ class _RideMapState extends State<RideMap> {
       west = min(west, point.longitude);
       east = max(east, point.longitude);
     }
+    // A span this wide is a bad fit. It zooms out until the world is drawn more than once.
+    if (north - south > 50 || east - west > 50) return false;
     if (kIsWeb) {
       _programmatic = true;
       _google?.moveCamera(
@@ -239,20 +245,20 @@ class _RideMapState extends State<RideMap> {
     }
   }
 
-  Future<void> _loadHazardIcon() async {
-    final icon = await _badgeMarker(Icons.warning_amber, const Color(0xFFC2410C));
-    if (!mounted) return;
-    setState(() => _hazardIcon = icon);
-  }
-
   Future<void> _loadFuelIcon() async {
-    final icon = await _badgeMarker(Icons.local_gas_station, const Color(0xFFE11D2E));
+    final icon = await _badgeMarker(Icons.local_gas_station, const Color(0xFFE11D2E), size: 24);
     if (!mounted) return;
     setState(() => _fuelIcon = icon);
   }
 
-  Future<gmaps.BitmapDescriptor> _badgeMarker(IconData icon, Color color) async {
-    const size = 96.0;
+  Future<void> _loadTollIcon() async {
+    final icon = await _badgeMarker(Icons.toll, const Color(0xFFB45309), size: 24);
+    if (!mounted) return;
+    setState(() => _tollIcon = icon);
+  }
+
+  Future<gmaps.BitmapDescriptor> _badgeMarker(IconData icon, Color color, {double size = 42}) async {
+    const canvasSize = 96.0;
     final recorder = ui.PictureRecorder();
     final canvas = Canvas(recorder);
     canvas.drawCircle(const Offset(48, 48), 44, Paint()..color = color);
@@ -270,10 +276,10 @@ class _RideMapState extends State<RideMap> {
         style: const TextStyle(fontFamily: 'MaterialIcons', fontSize: 58, color: Colors.white),
       );
     painter.layout();
-    painter.paint(canvas, Offset((size - painter.width) / 2, (size - painter.height) / 2));
-    final image = await recorder.endRecording().toImage(size.toInt(), size.toInt());
+    painter.paint(canvas, Offset((canvasSize - painter.width) / 2, (canvasSize - painter.height) / 2));
+    final image = await recorder.endRecording().toImage(canvasSize.toInt(), canvasSize.toInt());
     final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
-    return gmaps.BitmapDescriptor.bytes(bytes!.buffer.asUint8List(), width: 42, height: 42);
+    return gmaps.BitmapDescriptor.bytes(bytes!.buffer.asUint8List(), width: size, height: size);
   }
 
   double _screenHeading() {
@@ -306,7 +312,7 @@ class _RideMapState extends State<RideMap> {
 
   Set<gmaps.Marker> _googleMarkers(SosFix? sos) {
     final markers = <gmaps.Marker>{};
-    for (final halt in ride.visibleHalts) {
+    for (final halt in ride.mapHalts) {
       markers.add(gmaps.Marker(
         markerId: gmaps.MarkerId(halt.id),
         position: _g(halt.point),
@@ -314,7 +320,7 @@ class _RideMapState extends State<RideMap> {
         icon: gmaps.BitmapDescriptor.defaultMarkerWithHue(gmaps.BitmapDescriptor.hueOrange),
       ));
     }
-    for (final pump in ride.pumps) {
+    for (final pump in ride.shownPumps) {
       markers.add(gmaps.Marker(
         markerId: gmaps.MarkerId(pump.id),
         position: _g(pump.point),
@@ -322,26 +328,45 @@ class _RideMapState extends State<RideMap> {
         icon: _fuelIcon ?? gmaps.BitmapDescriptor.defaultMarkerWithHue(gmaps.BitmapDescriptor.hueRose),
       ));
     }
-    if (ride.routes.isNotEmpty && ride.roadFitsDay) {
+    if (ride.planning) {
+      for (final toll in ride.planTolls) {
+        markers.add(gmaps.Marker(
+          markerId: gmaps.MarkerId('toll-${toll.id}'),
+          position: _g(toll.point),
+          infoWindow: gmaps.InfoWindow(title: toll.name),
+          onTap: () => ride.pickToll(toll),
+          icon: _tollIcon ?? gmaps.BitmapDescriptor.defaultMarkerWithHue(gmaps.BitmapDescriptor.hueOrange),
+        ));
+      }
+    }
+    if (ride.showHudRoute) {
       final chosen = ride.routes[ride.selectedRoute.clamp(0, ride.routes.length - 1)];
       final end = chosen.points.last;
-      markers.add(gmaps.Marker(
-        markerId: const gmaps.MarkerId('destination'),
-        position: _g(end),
-        infoWindow: gmaps.InfoWindow(title: ride.destinationName),
-        icon: gmaps.BitmapDescriptor.defaultMarkerWithHue(gmaps.BitmapDescriptor.hueViolet),
-      ));
+      final covered = ride.visibleHalts.any((halt) => const Distance().as(LengthUnit.Meter, halt.point, end) < 400);
+      if (!covered) {
+        markers.add(gmaps.Marker(
+          markerId: const gmaps.MarkerId('destination'),
+          position: _g(end),
+          infoWindow: gmaps.InfoWindow(title: ride.destinationName),
+          icon: gmaps.BitmapDescriptor.defaultMarkerWithHue(gmaps.BitmapDescriptor.hueViolet),
+        ));
+      }
     }
     for (final rider in ride.mapRiders) {
       if (rider.you) {
+        // The parked stand-in is not a real fix. Drawing it on open put an arrow
+        // on the map before anyone had a location.
+        if (ride.gpsFix == null) continue;
         final deg = ((_screenHeading() / 5).round() * 5) % 360;
+        final arrow = _arrows[deg] ?? _arrows[0];
+        // A missing arrow used to fall back to Google's red pin, which showed up
+        // as a second dot next to the rider.
+        if (arrow == null) continue;
         markers.add(gmaps.Marker(
           markerId: gmaps.MarkerId(rider.id),
           position: _g(rider.point),
           infoWindow: const gmaps.InfoWindow(title: 'YOU'),
-          icon: _arrows[deg] ??
-              _arrows[0] ??
-              gmaps.BitmapDescriptor.defaultMarkerWithHue(gmaps.BitmapDescriptor.hueAzure),
+          icon: arrow,
           anchor: const Offset(0.5, 0.5),
           zIndexInt: 4,
         ));
@@ -353,17 +378,6 @@ class _RideMapState extends State<RideMap> {
         infoWindow: gmaps.InfoWindow(title: rider.name),
         icon: _riderIcons[rider.mark] ??
             gmaps.BitmapDescriptor.defaultMarkerWithHue(gmaps.BitmapDescriptor.hueOrange),
-      ));
-    }
-    for (final hazard in ride.roadHazards) {
-      final point = hazard.point;
-      if (point == null) continue;
-      markers.add(gmaps.Marker(
-        markerId: gmaps.MarkerId('hazard-${hazard.id}'),
-        position: _g(point),
-        infoWindow: gmaps.InfoWindow(title: hazard.title, snippet: hazard.detail),
-        icon: _hazardIcon ?? gmaps.BitmapDescriptor.defaultMarkerWithHue(gmaps.BitmapDescriptor.hueOrange),
-        zIndexInt: 3,
       ));
     }
     if (sos != null) {
@@ -378,7 +392,7 @@ class _RideMapState extends State<RideMap> {
   }
 
   Set<gmaps.Polyline> _googleLines() {
-    if (ride.navigating && ride.routes.isNotEmpty && (ride.roadFitsDay || !ride.roadFitsSomeDay)) {
+    if (ride.showHudRoute) {
       final chosen = ride.routes[ride.selectedRoute.clamp(0, ride.routes.length - 1)];
       return {
         gmaps.Polyline(
@@ -389,52 +403,45 @@ class _RideMapState extends State<RideMap> {
         ),
       };
     }
-    if (ride.planning && ride.roadFitsDay && ride.routes.isNotEmpty) {
+    if (ride.planning && ride.planPaths.isNotEmpty) {
+      final paths = ride.planPaths;
       return {
-        for (var i = 0; i < ride.routes.length; i++)
+        for (final path in paths)
           gmaps.Polyline(
-            polylineId: gmaps.PolylineId('drive-$i'),
-            color: i == ride.selectedRoute ? const Color(0xFF1D4ED8) : const Color(0xFF94A3B8),
-            width: i == ride.selectedRoute ? 6 : 4,
-            zIndex: i == ride.selectedRoute ? 2 : 1,
+            polylineId: gmaps.PolylineId('day-${path.day}-${path.alternative ?? 'saved'}'),
+            color: path.selected ? dayColor(path.day) : dayColor(path.day).withValues(alpha: 0.35),
+            width: path.selected ? (path.day == ride.planDay ? 6 : 5) : 4,
+            zIndex: path.selected ? (path.day == ride.planDay ? 3 : 1) : 0,
             consumeTapEvents: true,
-            onTap: () => ride.selectRoute(i),
-            points: [for (final point in ride.routes[i].points) _g(point)],
+            onTap: () => ride.openPlannedDay(path.day, alternative: path.alternative),
+            points: [for (final point in path.points) _g(point)],
           ),
-      };
-    }
-    final day = ride.shownRoute;
-    if (day.length >= 2) {
-      return {
-        gmaps.Polyline(
-          polylineId: const gmaps.PolylineId('day'),
-          color: const Color(0xFF1D4ED8),
-          width: 5,
-          points: [for (final point in day) _g(point)],
-        ),
       };
     }
     return {};
   }
 
   List<Polyline> _mapLines() {
-    if (ride.navigating && ride.routes.isNotEmpty && (ride.roadFitsDay || !ride.roadFitsSomeDay)) {
+    if (ride.showHudRoute) {
       final chosen = ride.routes[ride.selectedRoute.clamp(0, ride.routes.length - 1)];
       return [Polyline(points: chosen.points, color: const Color(0xFF1D4ED8), strokeWidth: 5)];
     }
-    if (ride.planning && ride.roadFitsDay && ride.routes.isNotEmpty) {
+    if (ride.planning && ride.planPaths.isNotEmpty) {
+      final paths = [...ride.planPaths]..sort((a, b) {
+          final aRank = a.selected ? (a.day == ride.planDay ? 2 : 1) : 0;
+          final bRank = b.selected ? (b.day == ride.planDay ? 2 : 1) : 0;
+          return aRank.compareTo(bRank);
+        });
       return [
-        for (var i = 0; i < ride.routes.length; i++)
+        for (final path in paths)
           Polyline(
-            points: ride.routes[i].points,
-            color: i == ride.selectedRoute ? const Color(0xFF1D4ED8) : const Color(0xFF94A3B8),
-            strokeWidth: i == ride.selectedRoute ? 5 : 3,
+            points: path.points,
+            color: path.selected ? dayColor(path.day) : dayColor(path.day).withValues(alpha: 0.35),
+            strokeWidth: path.selected ? (path.day == ride.planDay ? 5 : 4) : 3,
           ),
       ];
     }
-    final day = ride.shownRoute;
-    if (day.length < 2) return [];
-    return [Polyline(points: day, color: const Color(0xFF1D4ED8), strokeWidth: 5)];
+    return [];
   }
 
   Widget _googleMap(SosFix? sos) {
@@ -443,7 +450,9 @@ class _RideMapState extends State<RideMap> {
       onMapCreated: (controller) {
         _google = controller;
         _ready = true;
-        _frameRoute();
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _frameRoute();
+        });
       },
       onTap: (point) => _onMapTap(LatLng(point.latitude, point.longitude)),
       onCameraMove: (position) => _cameraBearing = position.bearing,
@@ -456,6 +465,13 @@ class _RideMapState extends State<RideMap> {
       zoomControlsEnabled: false,
       myLocationButtonEnabled: false,
       mapToolbarEnabled: false,
+      minMaxZoomPreference: const gmaps.MinMaxZoomPreference(3, 20),
+      cameraTargetBounds: gmaps.CameraTargetBounds(
+        gmaps.LatLngBounds(
+          southwest: const gmaps.LatLng(-85, -179.9),
+          northeast: const gmaps.LatLng(85, 179.9),
+        ),
+      ),
     );
   }
 
@@ -472,6 +488,7 @@ class _RideMapState extends State<RideMap> {
           options: MapOptions(
             initialCenter: ride.you,
             initialZoom: RideController.overviewZoom,
+            minZoom: 3,
             onMapReady: () {
               _ready = true;
               _frameRoute();
@@ -489,43 +506,43 @@ class _RideMapState extends State<RideMap> {
             PolylineLayer(polylines: _mapLines()),
             MarkerLayer(
               markers: [
-                for (final halt in ride.visibleHalts)
+                for (final halt in ride.mapHalts)
                   _pin(halt.point, _label(halt.name, const Color(0xFFB45309))),
-                for (final pump in ride.pumps)
-                  _pin(
-                    pump.point,
-                    _dot(const Color(0xFFE11D2E), Icons.local_gas_station, pump.name),
-                  ),
+                for (final pump in ride.shownPumps) _spot(pump.point, const Color(0xFFE11D2E), Icons.local_gas_station, pump.name),
+                if (ride.planning)
+                  for (final toll in ride.planTolls)
+                    _spot(
+                      toll.point,
+                      const Color(0xFFB45309),
+                      Icons.toll,
+                      toll.name,
+                      onTap: () => ride.pickToll(toll),
+                    ),
                 for (final rider in ride.mapRiders)
                   if (!rider.you)
                     _pin(
                       rider.point,
                       _dot(riderMarks[rider.mark].color, riderMarks[rider.mark].icon, rider.name),
                     ),
-                for (final hazard in ride.roadHazards)
-                  if (hazard.point != null)
-                    _pin(
-                      hazard.point!,
-                      _dot(const Color(0xFFC2410C), Icons.warning_amber, hazard.title),
-                    ),
                 if (sos != null)
                   _pin(
                     LatLng(sos.lat, sos.lng),
                     _label('SOS', const Color(0xFFC81E1E)),
                   ),
-                Marker(
-                  point: ride.you,
-                  width: 40,
-                  height: 40,
-                  alignment: Alignment.center,
-                  child: Transform.rotate(
-                    angle: ride.travelHeading * pi / 180,
-                    child: CustomPaint(
-                      size: const Size(40, 40),
-                      painter: const _NavArrowPainter(),
+                if (ride.gpsFix != null)
+                  Marker(
+                    point: ride.you,
+                    width: 40,
+                    height: 40,
+                    alignment: Alignment.center,
+                    child: Transform.rotate(
+                      angle: ride.travelHeading * pi / 180,
+                      child: CustomPaint(
+                        size: const Size(40, 40),
+                        painter: const _NavArrowPainter(),
+                      ),
                     ),
                   ),
-                ),
               ],
             ),
             const RichAttributionWidget(
@@ -535,33 +552,51 @@ class _RideMapState extends State<RideMap> {
             ),
           ],
         ),
-        if (ride.planning)
+        if (ride.planning && ride.planScreen == PlanScreen.map)
           Positioned(
             left: 8,
-            right: 108,
+            top: 8,
+            child: PointerInterceptor(
+              child: Material(
+                color: Colors.white,
+                elevation: 2,
+                shape: const CircleBorder(),
+                child: IconButton(
+                  tooltip: 'Back',
+                  onPressed: ride.closeMapPick,
+                  icon: const Icon(Icons.arrow_back),
+                ),
+              ),
+            ),
+          ),
+        if (ride.planning && ride.planScreen != PlanScreen.day)
+          Positioned(
+            left: ride.planScreen == PlanScreen.map ? 64 : 8,
+            right: ride.planScreen == PlanScreen.map ? 8 : 108,
             top: 8,
             child: PointerInterceptor(child: _PlanSearch(ride: ride)),
           )
-        else if (ride.navigating)
+        else if (!ride.planning && ride.navigating)
           Positioned(
             left: 8,
             right: 108,
             top: 8,
             child: _NavBanner(ride: ride),
           )
-        else
+        else if (!ride.planning)
           Positioned(
             left: 8,
             right: 108,
             top: 8,
             child: PointerInterceptor(child: _DirectionsSearch(ride: ride)),
           ),
-        Positioned(
-          right: 8,
-          top: 8,
-          child: PointerInterceptor(child: _dayBadge(ride)),
-        ),
-        if (!ride.planning && !ride.navigating)
+        if (ride.planning && ride.planScreen == PlanScreen.overview)
+          Positioned(
+            right: 8,
+            top: 8,
+            child: PointerInterceptor(child: _dayBadge(ride)),
+          ),
+        if (!ride.planning && !ride.navigating && !ride.searchFocused && ride.suggestions.isEmpty)
         Positioned(
           left: 8,
           top: 64,
@@ -600,12 +635,19 @@ class _RideMapState extends State<RideMap> {
             bottom: 8,
             child: _NavFooter(ride: ride),
           )
-        else if (ride.routes.isNotEmpty && ride.roadFitsDay)
+        else if (ride.planning && ride.routes.isNotEmpty && ride.roadFitsDay)
           Positioned(
             left: 8,
-            right: 72,
+            right: 8,
             bottom: 8,
-            child: _RouteChoices(ride: ride),
+            child: PointerInterceptor(child: _RouteChoices(ride: ride)),
+          )
+        else if (ride.showHudRoute)
+          Positioned(
+            left: 8,
+            right: 8,
+            bottom: 8,
+            child: PointerInterceptor(child: _RouteChoices(ride: ride)),
           )
         else if (!ride.planning && ride.fuelNote.isNotEmpty)
           Positioned(
@@ -625,10 +667,17 @@ class _RideMapState extends State<RideMap> {
               ),
             ),
           ),
+        if (ride.planning && ride.pickedToll != null && ride.planScreen != PlanScreen.day)
+          Positioned(
+            left: 12,
+            right: 12,
+            bottom: 16,
+            child: PointerInterceptor(child: _TollHaltCard(ride: ride, toll: ride.pickedToll!)),
+          ),
         if (!ride.planning)
         Positioned(
           right: 12,
-          bottom: ride.navigating ? 58 : (ride.routes.isNotEmpty && ride.roadFitsDay ? 156 : 16),
+          bottom: ride.navigating ? 58 : (ride.showHudRoute || (ride.planning && ride.routes.isNotEmpty && ride.roadFitsDay) ? 156 : 16),
           child: Semantics(
             button: true,
             label: 'Recenter',
@@ -651,6 +700,31 @@ class _RideMapState extends State<RideMap> {
           ),
         ),
       ],
+    );
+  }
+
+  Marker _spot(LatLng point, Color color, IconData icon, String name, {VoidCallback? onTap}) {
+    final iconBox = Container(
+      width: 14,
+      height: 14,
+      decoration: BoxDecoration(color: color, shape: BoxShape.circle, border: Border.all(color: Colors.white, width: 1)),
+      child: Icon(icon, size: 9, color: Colors.white),
+    );
+    return Marker(
+      point: point,
+      width: onTap == null ? 16 : 28,
+      height: onTap == null ? 16 : 28,
+      alignment: Alignment.center,
+      child: Tooltip(
+        message: name,
+        child: onTap == null
+            ? iconBox
+            : GestureDetector(
+                onTap: onTap,
+                behavior: HitTestBehavior.opaque,
+                child: Center(child: iconBox),
+              ),
+      ),
     );
   }
 
@@ -686,7 +760,12 @@ class _RideMapState extends State<RideMap> {
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
           decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(6)),
-          child: Text(text, style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w800)),
+          child: Text(
+            text,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w800),
+          ),
         ),
         const SizedBox(height: 2),
         Container(width: 10, height: 10, decoration: BoxDecoration(color: color, shape: BoxShape.circle, border: Border.all(color: Colors.white, width: 2))),
@@ -731,6 +810,11 @@ class _RideMapState extends State<RideMap> {
   }
 
   void _onMapTap(LatLng point) {
+    if (ride.planning && ride.planScreen == PlanScreen.map && ride.picking) {
+      ride.dropHalt(point);
+      return;
+    }
+    if (ride.planning) ride.showWholeRide();
     if (ride.picking) {
       ride.dropHalt(point);
       return;
@@ -784,6 +868,7 @@ class _DirectionsSearch extends StatefulWidget {
 
 class _DirectionsSearchState extends State<_DirectionsSearch> {
   final TextEditingController _text = TextEditingController();
+  final FocusNode _focus = FocusNode();
   String _sig = '';
 
   RideController get ride => widget.ride;
@@ -791,7 +876,12 @@ class _DirectionsSearchState extends State<_DirectionsSearch> {
   @override
   void initState() {
     super.initState();
+    _focus.addListener(_onFocus);
     ride.addListener(_sync);
+  }
+
+  void _onFocus() {
+    ride.setSearchFocused(_focus.hasFocus);
   }
 
   @override
@@ -806,6 +896,9 @@ class _DirectionsSearchState extends State<_DirectionsSearch> {
   @override
   void dispose() {
     ride.removeListener(_sync);
+    _focus.removeListener(_onFocus);
+    ride.setSearchFocused(false);
+    _focus.dispose();
     _text.dispose();
     super.dispose();
   }
@@ -829,6 +922,7 @@ class _DirectionsSearchState extends State<_DirectionsSearch> {
           borderRadius: BorderRadius.circular(24),
           child: TextField(
             controller: _text,
+            focusNode: _focus,
             keyboardType: TextInputType.text,
             textInputAction: TextInputAction.search,
             style: const TextStyle(fontSize: 16),
@@ -938,7 +1032,7 @@ class _PlanSearchState extends State<_PlanSearch> {
 
   void _sync() {
     if (!mounted) return;
-    final sig = '${ride.planSlot}|${ride.planDay}|${ride.planNote}|${ride.planHits.map((hit) => hit.placeId).join()}';
+    final sig = '${ride.planSlot}|${ride.planDay}|${ride.visiblePlanNote}|${ride.wholeRide}|${ride.planHits.map((hit) => hit.placeId).join()}';
     if (sig == _sig) return;
     _sig = sig;
     setState(() {});
@@ -948,6 +1042,7 @@ class _PlanSearchState extends State<_PlanSearch> {
   Widget build(BuildContext context) {
     final hint = switch (ride.planSlot) {
       PlanSlot.start => 'Search the start',
+      PlanSlot.dayStart => 'Search day ${ride.planDay} start',
       PlanSlot.finish => 'Search the finish',
       PlanSlot.dayEnd => 'Search day ${ride.planDay} end',
       PlanSlot.stop => 'Search a day ${ride.planDay} stop',
@@ -988,7 +1083,7 @@ class _PlanSearchState extends State<_PlanSearch> {
             },
           ),
         ),
-        if (ride.planNote.isNotEmpty)
+        if (ride.visiblePlanNote.isNotEmpty)
           Padding(
             padding: const EdgeInsets.only(top: 6),
             child: Material(
@@ -996,7 +1091,7 @@ class _PlanSearchState extends State<_PlanSearch> {
               borderRadius: BorderRadius.circular(12),
               child: Padding(
                 padding: const EdgeInsets.all(10),
-                child: Text(ride.planNote, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12)),
+                child: Text(ride.visiblePlanNote, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12)),
               ),
             ),
           ),
@@ -1031,6 +1126,43 @@ class _PlanSearchState extends State<_PlanSearch> {
   }
 }
 
+class _RouteChip extends StatelessWidget {
+  const _RouteChip({required this.title, required this.detail});
+
+  final String title;
+  final String detail;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: const Color(0xFF0F172A),
+      elevation: 2,
+      borderRadius: BorderRadius.circular(16),
+      clipBehavior: Clip.antiAlias,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(title, maxLines: 1, style: const TextStyle(fontWeight: FontWeight.w900, color: Colors.white)),
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: Text(
+                  detail,
+                  softWrap: false,
+                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.white70),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _RouteChoices extends StatelessWidget {
   const _RouteChoices({required this.ride});
 
@@ -1038,47 +1170,51 @@ class _RouteChoices extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final index = ride.selectedRoute.clamp(0, ride.routes.length - 1);
+    final route = ride.routes[index];
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        SizedBox(
-          height: 72,
-          child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        itemCount: ride.routes.length,
-        separatorBuilder: (_, _) => const SizedBox(width: 8),
-        itemBuilder: (context, index) {
-          final route = ride.routes[index];
-          final selected = index == ride.selectedRoute;
-          return Material(
-            color: selected ? const Color(0xFF0F172A) : Colors.white,
-            elevation: 2,
-            borderRadius: BorderRadius.circular(16),
-            child: InkWell(
-              borderRadius: BorderRadius.circular(16),
-              onTap: () => ride.selectRoute(index),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Text(
-                      route.duration.isEmpty ? 'Route ${index + 1}' : route.duration,
-                      style: TextStyle(fontWeight: FontWeight.w900, color: selected ? Colors.white : const Color(0xFF0F172A)),
-                    ),
-                    Text(
-                      '${route.distance} · ${route.summary}',
-                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: selected ? Colors.white70 : const Color(0xFF64748B)),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          );
-        },
-          ),
+        _RouteChip(
+          title: route.duration.isEmpty ? 'Route ${index + 1}' : route.duration,
+          detail: '${route.distance} · ${route.summary}',
         ),
+        if (ride.routes.length > 1) ...[
+          const SizedBox(height: 8),
+          SizedBox(
+            height: 36,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: ride.routes.length,
+              separatorBuilder: (_, _) => const SizedBox(width: 8),
+              itemBuilder: (context, other) {
+                final alt = ride.routes[other];
+                final selected = other == index;
+                final label = alt.duration.isEmpty ? 'Route ${other + 1}' : alt.duration;
+                return Material(
+                  color: selected ? const Color(0xFF0F172A) : Colors.white,
+                  borderRadius: BorderRadius.circular(16),
+                  clipBehavior: Clip.antiAlias,
+                  child: InkWell(
+                    onTap: () => ride.selectRoute(other),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      child: Center(
+                        child: Text(
+                          label,
+                          style: TextStyle(
+                            fontWeight: FontWeight.w800,
+                            color: selected ? Colors.white : const Color(0xFF0F172A),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
         const SizedBox(height: 8),
         if (!ride.planning)
         SizedBox(
@@ -1199,6 +1335,57 @@ void paintNavArrow(Canvas canvas, double size) {
   );
   canvas.drawPath(path, Paint()..color = const Color(0xFF1A73E8));
   canvas.restore();
+}
+
+class _TollHaltCard extends StatelessWidget {
+  const _TollHaltCard({required this.ride, required this.toll});
+
+  final RideController ride;
+  final TollPlaza toll;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.white,
+      elevation: 6,
+      borderRadius: BorderRadius.circular(16),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 12, 10, 8),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.toll, color: Color(0xFFB45309), size: 18),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    toll.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            const Text(
+              'Add this toll naka as a halt on the plan.',
+              style: TextStyle(color: Color(0xFF64748B), fontSize: 13),
+            ),
+            Row(
+              children: [
+                TextButton(onPressed: ride.dismissToll, child: const Text('Not now')),
+                const Spacer(),
+                FilledButton(onPressed: ride.addTollAsHalt, child: const Text('Add as halt')),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 class RiderMark {

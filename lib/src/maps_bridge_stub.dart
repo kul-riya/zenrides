@@ -11,9 +11,13 @@ Future<void> loadMaps() async {}
 
 Future<List<FuelPump>> nearbyFuel(LatLng here) async => const [];
 
+Future<List<FuelPump>> fuelAlong(List<LatLng> road) async => const [];
+
+Future<List<TollPlaza>> tollsAlong(List<LatLng> road) async => const [];
+
 Future<List<PlaceHit>> search(String query, LatLng here) async => const [];
 
-Future<List<RouteChoice>> directions({required LatLng origin, required String placeId}) async => const [];
+Future<List<RouteChoice>> directions({required LatLng origin, required String placeId, List<LatLng> via = const []}) async => const [];
 
 Future<HazardReport> hazards(LatLng here, double heading) async => const HazardReport(hazards: [], failures: []);
 

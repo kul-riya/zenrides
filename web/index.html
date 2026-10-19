@@ -72,6 +72,36 @@
         return (meters / 1000).toFixed(meters < 10000 ? 1 : 0) + ' km';
       }
 
+      function haversineKm(a, b) {
+        var r = 6371;
+        var dLat = (b.lat - a.lat) * Math.PI / 180;
+        var dLng = (b.lng - a.lng) * Math.PI / 180;
+        var h = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+          Math.cos(a.lat * Math.PI / 180) * Math.cos(b.lat * Math.PI / 180) *
+          Math.sin(dLng / 2) * Math.sin(dLng / 2);
+        return 2 * r * Math.asin(Math.min(1, Math.sqrt(h)));
+      }
+
+      function sampleByDistance(points, count) {
+        if (points.length <= count) return points.slice();
+        var total = 0;
+        var steps = [];
+        for (var i = 1; i < points.length; i++) {
+          total += haversineKm(points[i - 1], points[i]);
+          steps.push(total);
+        }
+        var samples = [points[0]];
+        var target = 1;
+        for (var n = 1; n < points.length && samples.length < count - 1; n++) {
+          if (steps[n - 1] >= total * target / (count - 1)) {
+            samples.push(points[n]);
+            target += 1;
+          }
+        }
+        samples.push(points[points.length - 1]);
+        return samples;
+      }
+
       function decodePolyline(str, precision) {
         var index = 0, lat = 0, lng = 0, coordinates = [], factor = Math.pow(10, precision || 6);
         while (index < str.length) {
@@ -154,9 +184,12 @@
         }).filter(Boolean);
       }
 
-      async function osrmRoutes(oLat, oLng, dLat, dLng) {
+      async function osrmRoutes(oLat, oLng, dLat, dLng, via) {
+        var coords = [oLng + ',' + oLat];
+        (via || []).forEach(function (spot) { coords.push(spot.lng + ',' + spot.lat); });
+        coords.push(dLng + ',' + dLat);
         var url = 'https://router.project-osrm.org/route/v1/driving/' +
-          oLng + ',' + oLat + ';' + dLng + ',' + dLat +
+          coords.join(';') +
           '?alternatives=true&overview=full&geometries=geojson&steps=true';
         var response = await fetch(url);
         if (!response.ok) throw new Error('Directions failed');
@@ -190,9 +223,12 @@
         return routes;
       }
 
-      async function valhallaRoutes(oLat, oLng, dLat, dLng) {
+      async function valhallaRoutes(oLat, oLng, dLat, dLng, via) {
+        var locations = [{ lon: oLng, lat: oLat }];
+        (via || []).forEach(function (spot) { locations.push({ lon: spot.lng, lat: spot.lat }); });
+        locations.push({ lon: dLng, lat: dLat });
         var body = {
-          locations: [{ lon: oLng, lat: oLat }, { lon: dLng, lat: dLat }],
+          locations: locations,
           costing: 'auto',
           alternates: 2,
           directions_options: { units: 'kilometers' }
@@ -236,6 +272,72 @@
       }
 
       window.zenRidesMaps = {
+        fuelAlong: async function (pointsJson) {
+          var points = [];
+          try { points = pointsJson ? JSON.parse(pointsJson) : []; } catch (error) { points = []; }
+          if (!Array.isArray(points) || points.length < 2) return JSON.stringify([]);
+          var length = 0;
+          for (var i = 1; i < points.length; i++) length += haversineKm(points[i - 1], points[i]);
+          var count = Math.min(40, Math.max(2, Math.ceil(length / 4) || 2));
+          var samples = sampleByDistance(points, count);
+          if (ready()) {
+            try {
+              var places = await google.maps.importLibrary('places');
+              var seen = {};
+              var collected = [];
+              var spacing = count > 1 ? length / (count - 1) : 6;
+              var radius = Math.min(5000, Math.max(1500, spacing * 500 + 800));
+              for (var s = 0; s < samples.length; s++) {
+                var request = {
+                  fields: ['displayName', 'location', 'id'],
+                  locationRestriction: { center: { lat: samples[s].lat, lng: samples[s].lng }, radius: radius },
+                  includedPrimaryTypes: ['gas_station'],
+                  maxResultCount: 10
+                };
+                try {
+                  var result = await places.Place.searchNearby(request);
+                  (result.places || []).forEach(function (place) {
+                    var spot = pointOf(place.location);
+                    if (!place.id || seen[place.id] || !spot) return;
+                    seen[place.id] = true;
+                    collected.push({ id: place.id, name: place.displayName || 'Petrol pump', lat: spot.lat, lng: spot.lng });
+                  });
+                } catch (error) {
+                  continue;
+                }
+              }
+              if (collected.length) return JSON.stringify(collected);
+            } catch (error) {}
+          }
+          var south = points[0].lat, north = south, west = points[0].lng, east = west;
+          points.forEach(function (spot) {
+            south = Math.min(south, spot.lat);
+            north = Math.max(north, spot.lat);
+            west = Math.min(west, spot.lng);
+            east = Math.max(east, spot.lng);
+          });
+          var pad = 0.01;
+          var query = '[out:json][timeout:15];(node["amenity"="fuel"](' + (south - pad) + ',' + (west - pad) + ',' + (north + pad) + ',' + (east + pad) + ');way["amenity"="fuel"](' + (south - pad) + ',' + (west - pad) + ',' + (north + pad) + ',' + (east + pad) + '););out center 160;';
+          var servers = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
+          for (var n = 0; n < servers.length; n++) {
+            try {
+              var response = await fetch(servers[n], { method: 'POST', body: new URLSearchParams({ data: query }) });
+              if (!response.ok) continue;
+              var body = await response.json();
+              return JSON.stringify((body.elements || []).map(function (el) {
+                var spotLat = el.lat, spotLng = el.lon;
+                if ((spotLat == null || spotLng == null) && el.center) {
+                  spotLat = el.center.lat;
+                  spotLng = el.center.lon;
+                }
+                if (spotLat == null || spotLng == null) return null;
+                var tags = el.tags || {};
+                return { id: el.type + '-' + el.id, name: tags.brand || tags.name || tags.operator || 'Petrol pump', lat: spotLat, lng: spotLng };
+              }).filter(Boolean));
+            } catch (error) {}
+          }
+          return JSON.stringify([]);
+        },
         nearbyFuel: async function (lat, lng) {
           if (ready()) {
             try {
@@ -275,6 +377,78 @@
           }
           return JSON.stringify(await overpassFuel(lat, lng));
         },
+        tollsAlong: async function (pointsJson) {
+          var points = [];
+          try { points = pointsJson ? JSON.parse(pointsJson) : []; } catch (error) { points = []; }
+          if (!Array.isArray(points) || points.length < 2) return JSON.stringify([]);
+          var length = 0;
+          for (var i = 1; i < points.length; i++) length += haversineKm(points[i - 1], points[i]);
+          var count = Math.min(16, Math.max(2, Math.ceil(length / 20) || 2));
+          var samples = sampleByDistance(points, count);
+          var seen = {};
+          var collected = [];
+          function keepToll(id, name, lat, lng) {
+            if (!id || seen[id] || lat == null || lng == null) return;
+            if (!/toll|naka|plaza|gantry/i.test(name || '')) return;
+            seen[id] = true;
+            collected.push({ id: id, name: name || 'Toll naka', lat: lat, lng: lng });
+          }
+          if (ready()) {
+            try {
+              var places = await google.maps.importLibrary('places');
+              var spacing = count > 1 ? length / (count - 1) : 20;
+              var radius = Math.min(8000, Math.max(2500, spacing * 400));
+              for (var s = 0; s < samples.length; s++) {
+                try {
+                  var result = await places.Place.searchByText({
+                    textQuery: 'toll plaza',
+                    fields: ['displayName', 'location', 'id'],
+                    locationBias: { center: { lat: samples[s].lat, lng: samples[s].lng }, radius: radius },
+                    maxResultCount: 8
+                  });
+                  (result.places || []).forEach(function (place) {
+                    var spot = pointOf(place.location);
+                    if (!spot) return;
+                    keepToll(place.id, place.displayName || '', spot.lat, spot.lng);
+                  });
+                } catch (error) {}
+              }
+            } catch (error) {}
+          }
+          var south = points[0].lat, north = south, west = points[0].lng, east = west;
+          points.forEach(function (spot) {
+            south = Math.min(south, spot.lat);
+            north = Math.max(north, spot.lat);
+            west = Math.min(west, spot.lng);
+            east = Math.max(east, spot.lng);
+          });
+          var pad = 0.02;
+          var query = '[out:json][timeout:15];(node["barrier"="toll_booth"](' + (south - pad) + ',' + (west - pad) + ',' + (north + pad) + ',' + (east + pad) + ');way["barrier"="toll_booth"](' + (south - pad) + ',' + (west - pad) + ',' + (north + pad) + ',' + (east + pad) + ');node["highway"="toll_gantry"](' + (south - pad) + ',' + (west - pad) + ',' + (north + pad) + ',' + (east + pad) + '););out center 80;';
+          var servers = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
+          for (var n = 0; n < servers.length; n++) {
+            try {
+              var response = await fetch(servers[n], { method: 'POST', body: new URLSearchParams({ data: query }) });
+              if (!response.ok) continue;
+              var body = await response.json();
+              (body.elements || []).forEach(function (el) {
+                var spotLat = el.lat, spotLng = el.lon;
+                if ((spotLat == null || spotLng == null) && el.center) {
+                  spotLat = el.center.lat;
+                  spotLng = el.center.lon;
+                }
+                var tags = el.tags || {};
+                var name = tags.name || tags.ref || tags.operator || 'Toll naka';
+                if (!el.type || el.id == null || spotLat == null || spotLng == null) return;
+                var id = el.type + '-' + el.id;
+                if (seen[id]) return;
+                seen[id] = true;
+                collected.push({ id: id, name: name, lat: spotLat, lng: spotLng });
+              });
+              break;
+            } catch (error) {}
+          }
+          return JSON.stringify(collected);
+        },
         search: async function (query, lat, lng) {
           if (ready()) {
             try {
@@ -299,17 +473,41 @@
           }
           return JSON.stringify(await photonSearch(query, lat, lng));
         },
-        directions: async function (oLat, oLng, placeId) {
-          if (ready() && !/^-?\d+(\.\d+)?,-?\d+(\.\d+)?$/.test(placeId)) {
+        directions: async function (oLat, oLng, placeId, viaJson) {
+          var via = [];
+          try { via = viaJson ? JSON.parse(viaJson) : []; } catch (error) { via = []; }
+          if (!Array.isArray(via)) via = [];
+          var origin = { lat: oLat, lng: oLng };
+          var coordinate = /^-?\d+(\.\d+)?,-?\d+(\.\d+)?$/.test(String(placeId));
+          var destination = origin;
+          var dLat = oLat;
+          var dLng = oLng;
+          if (coordinate) {
+            var parts = String(placeId).split(',');
+            dLat = parseFloat(parts[0]);
+            dLng = parseFloat(parts[1]);
+            destination = { lat: dLat, lng: dLng };
+          } else {
+            destination = 'places/' + placeId;
+          }
+          if (ready()) {
             try {
               var routesLib = await google.maps.importLibrary('routes');
-              var result = await routesLib.Route.computeRoutes({
-                origin: { lat: oLat, lng: oLng },
-                destination: 'places/' + placeId,
+              var request = {
+                origin: origin,
+                destination: destination,
                 travelMode: 'DRIVING',
+                routingPreference: 'TRAFFIC_AWARE',
+                departureTime: new Date(),
                 computeAlternativeRoutes: true,
                 fields: ['path', 'durationMillis', 'distanceMeters', 'description']
-              });
+              };
+              if (via.length) {
+                request.intermediates = via.map(function (spot) {
+                  return { lat: spot.lat, lng: spot.lng };
+                });
+              }
+              var result = await routesLib.Route.computeRoutes(request);
               var routes = (result.routes || []).map(function (route) {
                 var points = [];
                 (route.path || []).forEach(function (point) {
@@ -322,6 +520,7 @@
                   distance: kilometers(route.distanceMeters || 0),
                   durationSeconds: Math.round((route.durationMillis || 0) / 1000),
                   distanceMeters: Math.round(route.distanceMeters || 0),
+                  traffic: true,
                   points: points,
                   steps: points.length ? [{ instruction: route.description || 'Head to the destination', lat: points[0].lat, lng: points[0].lng }] : []
                 };
@@ -329,14 +528,11 @@
               if (routes.length) return JSON.stringify(routes);
             } catch (error) {}
           }
-          var parts = String(placeId).split(',');
-          if (parts.length !== 2) throw new Error('No driving route from here.');
-          var dLat = parseFloat(parts[0]);
-          var dLng = parseFloat(parts[1]);
+          if (!coordinate) throw new Error('No driving route from here.');
           try {
-            return JSON.stringify(await valhallaRoutes(oLat, oLng, dLat, dLng));
+            return JSON.stringify(await valhallaRoutes(oLat, oLng, dLat, dLng, via));
           } catch (error) {
-            return JSON.stringify(await osrmRoutes(oLat, oLng, dLat, dLng));
+            return JSON.stringify(await osrmRoutes(oLat, oLng, dLat, dLng, via));
           }
         },
         hazards: async function (lat, lng, heading) {
@@ -453,13 +649,6 @@
   </script>
 </head>
 <body>
-  <div id="boot" style="position:fixed;inset:0;z-index:2147483646;display:flex;align-items:center;justify-content:center;background:#eef1f5;color:#0f172a;font:800 28px system-ui,sans-serif">Sign in</div>
-  <script>
-    window.addEventListener('flutter-first-frame', function () {
-      var boot = document.getElementById('boot');
-      if (boot) boot.remove();
-    });
-  </script>
   <!--
     You can customize the "flutter_bootstrap.js" script.
     This is useful to provide a custom configuration to the Flutter loader

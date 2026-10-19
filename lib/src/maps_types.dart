@@ -40,6 +40,7 @@ class RouteChoice {
     this.durationSeconds = 0,
     this.distanceMeters = 0,
     this.steps = const [],
+    this.traffic = false,
   });
 
   final String summary;
@@ -49,4 +50,7 @@ class RouteChoice {
   final int durationSeconds;
   final int distanceMeters;
   final List<RouteStep> steps;
+
+  /// True when Google Routes returned this time with live traffic.
+  final bool traffic;
 }

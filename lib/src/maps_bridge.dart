@@ -15,13 +15,18 @@ class MapsBridge {
 
   static Future<List<FuelPump>> nearbyFuel(LatLng here) => impl.nearbyFuel(here);
 
+  static Future<List<FuelPump>> fuelAlong(List<LatLng> road) => impl.fuelAlong(road);
+
+  static Future<List<TollPlaza>> tollsAlong(List<LatLng> road) => impl.tollsAlong(road);
+
   static Future<List<PlaceHit>> search(String query, LatLng here) => impl.search(query, here);
 
   static Future<List<RouteChoice>> directions({
     required LatLng origin,
     required String placeId,
+    List<LatLng> via = const [],
   }) =>
-      impl.directions(origin: origin, placeId: placeId);
+      impl.directions(origin: origin, placeId: placeId, via: via);
 
   static Future<HazardReport> hazards(LatLng here, double heading) => impl.hazards(here, heading);
 

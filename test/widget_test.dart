@@ -24,4 +24,27 @@ void main() {
     expect(find.textContaining('KM/H'), findsNothing);
     expect(find.text('Recenter'), findsNothing);
   });
+
+  testWidgets('the bike and GPS chips hide while a place search is open', (tester) async {
+    final ride = RideController(network: false, clock: () => DateTime(2026, 10, 14, 8));
+    await tester.pumpWidget(MaterialApp(
+      home: RideScope(ride: ride, child: const Scaffold(body: HudPage())),
+    ));
+    await tester.pump();
+
+    expect(find.text('Hide Other Bikes'), findsOneWidget);
+    expect(find.text('GPS off'), findsOneWidget);
+
+    await tester.tap(find.byType(TextField));
+    await tester.pump();
+
+    expect(find.text('Hide Other Bikes'), findsNothing);
+    expect(find.text('GPS off'), findsNothing);
+
+    ride.setSearchFocused(false);
+    await tester.pump();
+
+    expect(find.text('Hide Other Bikes'), findsOneWidget);
+    expect(find.text('GPS off'), findsOneWidget);
+  });
 }
