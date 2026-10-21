@@ -99,6 +99,33 @@ class RideApi {
     }
   }
 
+  Future<void> addRider({
+    required String code,
+    required String id,
+    required String name,
+    required double lat,
+    required double lng,
+    required DateTime at,
+  }) async {
+    final stamp = Timestamp.fromDate(at);
+    try {
+      await Future.wait([
+        _db.collection('riders').doc(code).collection('members').doc(id).set({
+          'name': name,
+          'joinedAt': stamp,
+        }, SetOptions(merge: true)),
+        _db.collection('rides').doc(code).collection('riders').doc(id).set({
+          'name': name,
+          'lat': lat,
+          'lng': lng,
+          'updatedAt': stamp,
+        }, SetOptions(merge: true)),
+      ]);
+    } catch (e) {
+      throw RideApiException('Could not join this ride: $e');
+    }
+  }
+
   Future<void> pushLocation({
     required String code,
     required String id,
@@ -121,7 +148,10 @@ class RideApi {
 
   Future<void> deleteRider(String code, String id) async {
     try {
-      await _db.collection('rides/$code/riders').doc(id).delete();
+      await Future.wait([
+        _db.collection('rides').doc(code).collection('riders').doc(id).delete(),
+        _db.collection('riders').doc(code).collection('members').doc(id).delete(),
+      ]);
     } catch (e) {
       throw RideApiException('Could not remove that rider: $e');
     }
@@ -130,7 +160,8 @@ class RideApi {
   Future<void> deleteRideDocument(String code) async {
     try {
       final riders = await _db.collection('rides').doc(code).collection('riders').get();
-      for (final doc in riders.docs) {
+      final members = await _db.collection('riders').doc(code).collection('members').get();
+      for (final doc in [...riders.docs, ...members.docs]) {
         await doc.reference.delete();
       }
       await _db.collection('rides').doc(code).delete();

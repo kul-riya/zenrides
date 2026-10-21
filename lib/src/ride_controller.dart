@@ -1959,10 +1959,25 @@ class RideController extends ChangeNotifier {
     _clearSavedPlan();
     notifyListeners();
     if (_network) {
+      unawaited(_announceRider(next));
       unawaited(_syncGroup());
       unawaited(_adoptRide(next));
     }
     return next;
+  }
+
+  Future<void> _announceRider(String rideCode) async {
+    final here = you;
+    try {
+      await _api.addRider(
+        code: rideCode,
+        id: riderId,
+        name: riderName,
+        lat: here.latitude,
+        lng: here.longitude,
+        at: _clock(),
+      );
+    } catch (_) {}
   }
 
   void debugOfferSos(SosFix alert) {
@@ -2002,6 +2017,7 @@ class RideController extends ChangeNotifier {
     notifyListeners();
     if (_network) {
       unawaited(_api.claimRide(next, riderId).then((_) {}, onError: (Object _) {}));
+      unawaited(_announceRider(next));
       unawaited(_pushCurrentPlan());
       unawaited(_syncGroup());
       _rememberRide(next, asAdmin: true);
