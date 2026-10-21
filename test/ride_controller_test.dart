@@ -644,6 +644,32 @@ void main() {
     expect(plan.endMinutes[2], isNull);
   });
 
+  test('pause holds the ride without ending it, and does nothing once ended', () {
+    final ride = RideController(network: false, clock: () => DateTime(2026, 10, 18, 8));
+    ride.togglePause();
+    expect(ride.paused, isTrue);
+    expect(ride.ended, isFalse);
+
+    ride.togglePause();
+    expect(ride.paused, isFalse);
+
+    ride.endRide();
+    ride.togglePause();
+    expect(ride.paused, isFalse, reason: 'an ended ride cannot be paused');
+    expect(ride.ended, isTrue);
+  });
+
+  test('ending a ride does not carry over into the next joined code', () {
+    final ride = RideController(network: false, clock: () => DateTime(2026, 10, 18, 8));
+    ride.endRide();
+    expect(ride.ended, isTrue);
+
+    ride.joinCode('ZEN-2222');
+    expect(ride.ended, isFalse);
+    expect(ride.paused, isFalse);
+    expect(ride.onRide, isTrue);
+  });
+
   test('an empty pack is only the rider who joined', () {
     final ride = RideController(network: false, clock: () => DateTime(2026, 10, 14, 8));
     expect(ride.packRows.map((row) => row.you), [true]);

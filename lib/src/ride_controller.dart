@@ -16,6 +16,10 @@ enum RideTab { hud, pack, toll, tours }
 
 enum NoticeKind { pack, fuel, chai, hazard, slow, regroup, sos }
 
+/// idle: no code joined. live: tracking and broadcasting. paused: tracking
+/// held without ending. ended: this ride is over; a new code starts fresh.
+enum RidePhase { idle, live, paused, ended }
+
 class RideNotice {
   const RideNotice({required this.kind, required this.kicker, required this.body});
 
@@ -160,12 +164,14 @@ class RideController extends ChangeNotifier {
   bool _started = false;
 
   RideTab tab = RideTab.hud;
-  bool ended = false;
-  bool paused = false;
+
+  /// A fresh controller opens already on the demo code, same as the old
+  /// `onRide = true` default. generateCode/joinCode/leaveRide/deleteRide/
+  /// endRide/pause/resume are the only places that change this.
+  RidePhase _phase = RidePhase.live;
   bool showOthers = true;
   bool picking = false;
   bool planning = false;
-  bool onRide = true;
   bool admin = false;
   bool _joinedPack = false;
   int tripDays = 1;
@@ -256,6 +262,13 @@ class RideController extends ChangeNotifier {
   final Map<String, DateTime> _holdUntil = {};
   final Set<String> removed = {};
   final Map<String, RemoteRider> remote = {};
+
+  RidePhase get phase => _phase;
+
+  /// On a code, whether live, paused, or ended. False only once idle.
+  bool get onRide => _phase != RidePhase.idle;
+  bool get paused => _phase == RidePhase.paused;
+  bool get ended => _phase == RidePhase.ended;
 
   double get routeKm {
     final drive = chosen;
@@ -726,7 +739,7 @@ class RideController extends ChangeNotifier {
           riderName = profile.name;
           if (profile.rideCode.isNotEmpty) {
             code = profile.rideCode;
-            onRide = true;
+            _phase = RidePhase.live;
             final adminId = await _api.rideAdmin(profile.rideCode);
             admin = adminId == user.uid;
             _joinedPack = adminId != null && adminId != user.uid;
@@ -795,16 +808,26 @@ class RideController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// live ⇄ paused. Paused actually suspends the GPS watch (not just the
+  /// sync to Firestore), so YOU stops moving on the map until resumed.
   void togglePause() {
-    if (ended) return;
-    paused = !paused;
+    switch (_phase) {
+      case RidePhase.live:
+        _phase = RidePhase.paused;
+        _suspendGps();
+      case RidePhase.paused:
+        _phase = RidePhase.live;
+        if (gpsLocked) _watchGps();
+      case RidePhase.idle:
+      case RidePhase.ended:
+        return;
+    }
     notifyListeners();
   }
 
   void endRide() {
     if (ended) return;
-    ended = true;
-    paused = false;
+    _phase = RidePhase.ended;
     fuelOn = false;
     pumps = [];
     clearDirections();
@@ -1343,19 +1366,7 @@ class RideController extends ChangeNotifier {
       final position = await Geolocator.getCurrentPosition();
       _applyFix(position);
       gpsLocked = true;
-      await _gpsWatch?.cancel();
-      _gpsWatch = Geolocator.getPositionStream(
-        locationSettings: const LocationSettings(
-          accuracy: LocationAccuracy.high,
-          distanceFilter: 0,
-        ),
-      ).listen(
-        _applyFix,
-        onError: (_) {
-          gpsReason = 'GPS is holding the last fix.';
-          notifyListeners();
-        },
-      );
+      _watchGps();
     } catch (error) {
       gpsLocked = false;
       gpsReason = 'GPS is not available in this browser.';
@@ -1435,12 +1446,34 @@ class RideController extends ChangeNotifier {
     return _bearing(_along(points, at / cursor), _along(points, target / cursor));
   }
 
+  void _watchGps() {
+    unawaited(_gpsWatch?.cancel());
+    _gpsWatch = Geolocator.getPositionStream(
+      locationSettings: const LocationSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: 0,
+      ),
+    ).listen(
+      _applyFix,
+      onError: (_) {
+        gpsReason = 'GPS is holding the last fix.';
+        notifyListeners();
+      },
+    );
+  }
+
+  /// Cancels the live watch but keeps the last fix, for a pause.
+  void _suspendGps() {
+    unawaited(_gpsWatch?.cancel());
+    _gpsWatch = null;
+  }
+
+  /// Cancels the watch and drops the fix, for an ended ride.
   void _stopGps() {
     gpsLocked = false;
     gpsFix = null;
     gpsAt = null;
-    unawaited(_gpsWatch?.cancel());
-    _gpsWatch = null;
+    _suspendGps();
   }
 
   void beginPlanning() {
@@ -1879,9 +1912,7 @@ class RideController extends ChangeNotifier {
     final wasOnRide = onRide;
     planning = false;
     picking = false;
-    ended = false;
-    paused = false;
-    onRide = false;
+    _phase = RidePhase.idle;
     admin = false;
     _joinedPack = false;
     navigating = false;
@@ -1924,7 +1955,7 @@ class RideController extends ChangeNotifier {
   void leaveRide() {
     final leavingCode = code;
     final leavingId = riderId;
-    onRide = false;
+    _phase = RidePhase.idle;
     planning = false;
     picking = false;
     remote.clear();
@@ -1951,7 +1982,7 @@ class RideController extends ChangeNotifier {
       return null;
     }
     code = next;
-    onRide = true;
+    _phase = RidePhase.live;
     admin = false;
     _joinedPack = true;
     joinNote = _network ? 'Joining $next…' : 'Could not reach the ride.';
@@ -2009,7 +2040,7 @@ class RideController extends ChangeNotifier {
     final rand = Random();
     final next = 'ZEN-${1000 + rand.nextInt(9000)}';
     code = next;
-    onRide = true;
+    _phase = RidePhase.live;
     admin = true;
     _joinedPack = false;
     joinNote = '';
