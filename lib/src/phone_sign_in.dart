@@ -1,7 +1,8 @@
 import 'dart:async';
 
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+
+import 'auth_service.dart';
 
 /// Turns a typed phone number into E.164. A 10-digit number is treated as India.
 String? phoneE164(String raw) {
@@ -14,26 +15,27 @@ String? phoneE164(String raw) {
 }
 
 class AuthGate extends StatefulWidget {
-  const AuthGate({super.key, required this.ready});
+  const AuthGate({super.key, required this.ready, this.auth = const FirebaseAuthService()});
 
   final Widget ready;
+  final AuthService auth;
 
   @override
   State<AuthGate> createState() => _AuthGateState();
 }
 
 class _AuthGateState extends State<AuthGate> {
-  User? _user;
+  AuthUser? _user;
   var _named = false;
-  late final StreamSubscription<User?> _auth;
+  late final StreamSubscription<AuthUser?> _auth;
 
   @override
   void initState() {
     super.initState();
-    final current = FirebaseAuth.instance.currentUser;
+    final current = widget.auth.currentUser;
     _user = current;
     _named = (current?.displayName ?? '').trim().isNotEmpty;
-    _auth = FirebaseAuth.instance.authStateChanges().listen((user) {
+    _auth = widget.auth.authStateChanges().listen((user) {
       if (!mounted) return;
       setState(() {
         _user = user;
@@ -51,16 +53,18 @@ class _AuthGateState extends State<AuthGate> {
   @override
   Widget build(BuildContext context) {
     final user = _user;
-    if (user == null) return const PhoneSignIn();
+    if (user == null) return PhoneSignIn(auth: widget.auth);
     if (!_named) {
-      return NameEntry(onSaved: () => setState(() => _named = true));
+      return NameEntry(auth: widget.auth, onSaved: () => setState(() => _named = true));
     }
     return widget.ready;
   }
 }
 
 class PhoneSignIn extends StatefulWidget {
-  const PhoneSignIn({super.key});
+  const PhoneSignIn({super.key, this.auth = const FirebaseAuthService()});
+
+  final AuthService auth;
 
   @override
   State<PhoneSignIn> createState() => _PhoneSignInState();
@@ -69,7 +73,7 @@ class PhoneSignIn extends StatefulWidget {
 class _PhoneSignInState extends State<PhoneSignIn> {
   final _phone = TextEditingController();
   final _code = TextEditingController();
-  ConfirmationResult? _sent;
+  PhoneCodeSent? _sent;
   var _busy = false;
   String _error = '';
 
@@ -91,12 +95,11 @@ class _PhoneSignInState extends State<PhoneSignIn> {
       _error = '';
     });
     try {
-      // No container: Firebase renders an invisible reCAPTCHA.
-      final sent = await FirebaseAuth.instance.signInWithPhoneNumber(number);
+      final sent = await widget.auth.sendCode(number);
       if (!mounted) return;
       setState(() => _sent = sent);
-    } on FirebaseAuthException catch (error) {
-      setState(() => _error = error.message ?? 'Could not send the code.');
+    } on AuthException catch (error) {
+      setState(() => _error = error.message);
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -111,9 +114,9 @@ class _PhoneSignInState extends State<PhoneSignIn> {
       _error = '';
     });
     try {
-      await sent.confirm(sms);
-    } on FirebaseAuthException catch (error) {
-      setState(() => _error = error.message ?? 'That code was not accepted.');
+      await widget.auth.confirmCode(sent, sms);
+    } on AuthException catch (error) {
+      setState(() => _error = error.message);
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -158,9 +161,10 @@ class _PhoneSignInState extends State<PhoneSignIn> {
 }
 
 class NameEntry extends StatefulWidget {
-  const NameEntry({super.key, required this.onSaved});
+  const NameEntry({super.key, required this.onSaved, this.auth = const FirebaseAuthService()});
 
   final VoidCallback onSaved;
+  final AuthService auth;
 
   @override
   State<NameEntry> createState() => _NameEntryState();
@@ -188,11 +192,10 @@ class _NameEntryState extends State<NameEntry> {
       _error = '';
     });
     try {
-      await FirebaseAuth.instance.currentUser?.updateDisplayName(name);
-      await FirebaseAuth.instance.currentUser?.reload();
+      await widget.auth.setDisplayName(name);
       widget.onSaved();
-    } on FirebaseAuthException catch (error) {
-      setState(() => _error = error.message ?? 'Could not save that name.');
+    } on AuthException catch (error) {
+      setState(() => _error = error.message);
     } finally {
       if (mounted) setState(() => _busy = false);
     }

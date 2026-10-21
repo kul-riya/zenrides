@@ -3,13 +3,13 @@ import 'dart:convert';
 import 'dart:math';
 import 'dart:ui' show Color;
 
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
-import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'maps_bridge.dart';
+import 'auth_service.dart';
+import 'location_service.dart';
+import 'map_adapter.dart';
 import 'ride_api.dart';
 
 enum RideTab { hud, pack, toll, tours }
@@ -134,9 +134,18 @@ class DaySummary {
 }
 
 class RideController extends ChangeNotifier {
-  RideController({RideApi? api, DateTime Function()? clock, this._network = true})
-      : _api = api ?? RideApi(),
-        _clock = clock ?? DateTime.now {
+  RideController({
+    RideApi? api,
+    DateTime Function()? clock,
+    LocationService? location,
+    MapAdapter? maps,
+    AuthService? auth,
+    this._network = true,
+  })  : _api = api ?? RideApi(),
+        _clock = clock ?? DateTime.now,
+        _location = location ?? const DeviceLocationService(),
+        _maps = maps ?? const GoogleMapsAdapter(),
+        _auth = auth ?? const FirebaseAuthService() {
     dayStarted = _clock();
   }
 
@@ -151,6 +160,9 @@ class RideController extends ChangeNotifier {
 
   final RideApi _api;
   final DateTime Function() _clock;
+  final LocationService _location;
+  final MapAdapter _maps;
+  final AuthService _auth;
   final bool _network;
   final Distance _distance = const Distance();
 
@@ -728,7 +740,7 @@ class RideController extends ChangeNotifier {
   double kmTo(LatLng point) => _distance.as(LengthUnit.Kilometer, you, point);
 
   Future<void> restoreIdentity() async {
-    final user = FirebaseAuth.instance.currentUser;
+    final user = _auth.currentUser;
     if (user != null) {
       riderId = user.uid;
       final named = user.displayName?.trim() ?? '';
@@ -785,9 +797,9 @@ class RideController extends ChangeNotifier {
   }
 
   Future<void> refreshHazards() async {
-    if (ended || !_network || !MapsBridge.available) return;
+    if (ended || !_network || !_maps.available) return;
     try {
-      final report = await MapsBridge.hazards(you, travelHeading);
+      final report = await _maps.hazards(you, travelHeading);
       roadHazards = report.hazards;
       hazardFailures = report.failures;
     } catch (error) {
@@ -960,9 +972,9 @@ class RideController extends ChangeNotifier {
     final generation = ++_fuelGeneration;
     try {
       List<FuelPump> found = const [];
-      if (kIsWeb && MapsBridge.available) {
+      if (kIsWeb && _maps.available) {
         try {
-          found = await MapsBridge.fuelAlong(road);
+          found = await _maps.fuelAlong(road);
         } catch (_) {
           found = const [];
         }
@@ -1040,7 +1052,7 @@ class RideController extends ChangeNotifier {
       notifyListeners();
       return;
     }
-    if (!_network || !MapsBridge.available) {
+    if (!_network || !_maps.available) {
       if (planPumpsOn) planPumpNote = 'Pumps show on the live map.';
       if (planTollsOn) planTollNote = 'Tolls show on the live map.';
       notifyListeners();
@@ -1103,9 +1115,9 @@ class RideController extends ChangeNotifier {
   }
 
   Future<List<FuelPump>> _pumpsOn(List<LatLng> road) async {
-    if (kIsWeb && MapsBridge.available) {
+    if (kIsWeb && _maps.available) {
       try {
-        final found = await MapsBridge.fuelAlong(road);
+        final found = await _maps.fuelAlong(road);
         if (found.isNotEmpty) return found;
       } catch (_) {}
     }
@@ -1113,9 +1125,9 @@ class RideController extends ChangeNotifier {
   }
 
   Future<List<TollPlaza>> _tollsOn(List<LatLng> road) async {
-    if (kIsWeb && MapsBridge.available) {
+    if (kIsWeb && _maps.available) {
       try {
-        final found = await MapsBridge.tollsAlong(road);
+        final found = await _maps.tollsAlong(road);
         if (found.isNotEmpty) return found;
       } catch (_) {}
     }
@@ -1123,9 +1135,9 @@ class RideController extends ChangeNotifier {
   }
 
   Future<List<FuelPump>> _lookupFuel(LatLng here) async {
-    if (kIsWeb && MapsBridge.available) {
+    if (kIsWeb && _maps.available) {
       try {
-        return await MapsBridge.nearbyFuel(here);
+        return await _maps.nearbyFuel(here);
       } catch (error) {
         final fallback = await _api.fuelNear(here);
         if (fallback.isNotEmpty) return fallback;
@@ -1144,7 +1156,7 @@ class RideController extends ChangeNotifier {
       notifyListeners();
       return;
     }
-    if (!_network || !MapsBridge.available) {
+    if (!_network || !_maps.available) {
       suggestions = [];
       searchNote = 'Search opens with the live map.';
       notifyListeners();
@@ -1153,7 +1165,7 @@ class RideController extends ChangeNotifier {
     final generation = ++_searchGeneration;
     _searchDebounce = Timer(const Duration(milliseconds: 280), () async {
       try {
-        final found = await MapsBridge.search(trimmed, you);
+        final found = await _maps.search(trimmed, you);
         if (generation != _searchGeneration) return;
         suggestions = found;
         searchNote = found.isEmpty ? 'No matching places.' : '';
@@ -1197,7 +1209,7 @@ class RideController extends ChangeNotifier {
     final origin = you;
     unawaited(() async {
       try {
-        final found = await MapsBridge.directions(origin: origin, placeId: place.placeId);
+        final found = await _maps.directions(origin: origin, placeId: place.placeId);
         if (generation != _searchGeneration) return;
         routes = found.where((route) => route.points.length >= 2).toList();
         selectedRoute = 0;
@@ -1353,17 +1365,14 @@ class RideController extends ChangeNotifier {
     gpsReason = '';
     notifyListeners();
     try {
-      var permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
-      }
+      final permission = await _location.ensurePermission();
       if (permission == LocationPermission.denied || permission == LocationPermission.deniedForever) {
         gpsReason = 'Location permission denied.';
         gpsSeeking = false;
         notifyListeners();
         return;
       }
-      final position = await Geolocator.getCurrentPosition();
+      final position = await _location.currentPosition();
       _applyFix(position);
       gpsLocked = true;
       _watchGps();
@@ -1448,12 +1457,7 @@ class RideController extends ChangeNotifier {
 
   void _watchGps() {
     unawaited(_gpsWatch?.cancel());
-    _gpsWatch = Geolocator.getPositionStream(
-      locationSettings: const LocationSettings(
-        accuracy: LocationAccuracy.high,
-        distanceFilter: 0,
-      ),
-    ).listen(
+    _gpsWatch = _location.positionStream().listen(
       _applyFix,
       onError: (_) {
         gpsReason = 'GPS is holding the last fix.';
@@ -1795,7 +1799,7 @@ class RideController extends ChangeNotifier {
       notifyListeners();
       return;
     }
-    if (!_network || !MapsBridge.available) {
+    if (!_network || !_maps.available) {
       planHits = [];
       planNote = 'Search needs the map. Select on map still drops the halt.';
       notifyListeners();
@@ -1804,7 +1808,7 @@ class RideController extends ChangeNotifier {
     final generation = ++_planSearchGeneration;
     _searchDebounce = Timer(const Duration(milliseconds: 280), () async {
       try {
-        final found = await MapsBridge.search(trimmed, you);
+        final found = await _maps.search(trimmed, you);
         if (generation != _planSearchGeneration) return;
         planHits = found;
         planNote = found.isEmpty ? 'No matching places.' : '';
@@ -1826,13 +1830,13 @@ class RideController extends ChangeNotifier {
       _placeDraft(place.name, direct);
       return;
     }
-    if (!MapsBridge.available) {
+    if (!_maps.available) {
       planNote = 'That place has no map point. Tap the road instead.';
       notifyListeners();
       return;
     }
     try {
-      final point = await MapsBridge.placePoint(place.placeId);
+      final point = await _maps.placePoint(place.placeId);
       if (point == null) {
         planNote = 'That place has no map point. Tap the road instead.';
       } else {
@@ -2280,7 +2284,7 @@ class RideController extends ChangeNotifier {
     if (!alternatives && saved != null && saved.points.length >= 2 && _roadFitsMarks(saved.points, marks)) {
       return;
     }
-    if (!MapsBridge.available) {
+    if (!_maps.available) {
       if (!alternatives) return;
       planNote = 'Roads show on the live map.';
       planFit++;
@@ -2307,7 +2311,7 @@ class RideController extends ChangeNotifier {
     ];
     unawaited(() async {
       try {
-        final found = await MapsBridge.directions(origin: origin, placeId: placeId, via: via);
+        final found = await _maps.directions(origin: origin, placeId: placeId, via: via);
         if (_planRoadGeneration[day] != generation) return;
         final roads = found.where((route) => route.points.length >= 2).toList();
         if (roads.isEmpty) {

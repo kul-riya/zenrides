@@ -1,11 +1,87 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:latlong2/latlong.dart';
-import 'package:zenrides/src/maps_types.dart';
+import 'package:zenrides/src/location_service.dart';
+import 'package:zenrides/src/map_adapter.dart';
 import 'package:zenrides/src/ride_api.dart';
 import 'package:zenrides/src/ride_controller.dart';
 
+class _FakeLocation implements LocationService {
+  const _FakeLocation(this.fix);
+
+  final LatLng fix;
+
+  @override
+  Future<LocationPermission> ensurePermission() async => LocationPermission.whileInUse;
+
+  @override
+  Future<Position> currentPosition() async => Position(
+        latitude: fix.latitude,
+        longitude: fix.longitude,
+        timestamp: DateTime(2026, 10, 18, 8),
+        accuracy: 5,
+        altitude: 0,
+        altitudeAccuracy: 0,
+        heading: 0,
+        headingAccuracy: 0,
+        speed: 0,
+        speedAccuracy: 0,
+      );
+
+  @override
+  Stream<Position> positionStream() => const Stream.empty();
+}
+
+class _FakeMaps implements MapAdapter {
+  const _FakeMaps(this.hazard);
+
+  final RoadHazard hazard;
+
+  @override
+  bool get available => true;
+
+  @override
+  Future<List<FuelPump>> nearbyFuel(LatLng here) async => const [];
+
+  @override
+  Future<List<FuelPump>> fuelAlong(List<LatLng> road) async => const [];
+
+  @override
+  Future<List<TollPlaza>> tollsAlong(List<LatLng> road) async => const [];
+
+  @override
+  Future<List<PlaceHit>> search(String query, LatLng here) async => const [];
+
+  @override
+  Future<List<RouteChoice>> directions({required LatLng origin, required String placeId, List<LatLng> via = const []}) async => const [];
+
+  @override
+  Future<HazardReport> hazards(LatLng here, double heading) async => HazardReport(hazards: [hazard], failures: const []);
+
+  @override
+  Future<LatLng?> placePoint(String placeId) async => null;
+}
+
 void main() {
+  test('location and maps adapters can be swapped for fakes, so GPS and hazards never need real plugins in tests', () async {
+    const fix = LatLng(19.5, 72.8);
+    const hazard = RoadHazard(id: 'h1', title: 'Pothole', detail: 'Pothole ahead', point: fix);
+    final ride = RideController(
+      network: true,
+      clock: () => DateTime(2026, 10, 18, 8),
+      location: const _FakeLocation(fix),
+      maps: const _FakeMaps(hazard),
+    );
+
+    await ride.requestGps();
+    expect(ride.gpsLocked, isTrue);
+    expect(ride.you, fix);
+
+    await ride.refreshHazards();
+    expect(ride.nearbyHazards, [hazard]);
+  });
+
+
   test('a shared plan keeps the days, stops, and selected road', () {
     final raw = encodeSharedPlan(SharedPlan(
       updatedAt: 10,
