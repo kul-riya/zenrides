@@ -10,8 +10,8 @@ import 'package:google_maps_flutter/google_maps_flutter.dart' as gmaps;
 import 'package:latlong2/latlong.dart';
 
 import 'maps_bridge.dart';
-import 'ride_api.dart';
 import 'ride_controller.dart';
+import 'ride_repository.dart' show SosFix;
 
 class RideMap extends StatefulWidget {
   const RideMap({super.key, required this.ride});

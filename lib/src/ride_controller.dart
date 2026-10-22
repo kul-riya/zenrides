@@ -7,10 +7,14 @@ import 'package:flutter/foundation.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'auth_repository.dart';
 import 'auth_service.dart';
 import 'location_service.dart';
 import 'map_adapter.dart';
-import 'ride_api.dart';
+import 'navigation_repository.dart';
+import 'pack_repository.dart';
+import 'repository_exception.dart';
+import 'ride_repository.dart';
 
 enum RideTab { hud, pack, toll, tours }
 
@@ -135,17 +139,23 @@ class DaySummary {
 
 class RideController extends ChangeNotifier {
   RideController({
-    RideApi? api,
     DateTime Function()? clock,
     LocationService? location,
     MapAdapter? maps,
-    AuthService? auth,
+    AuthService? authService,
+    AuthRepository? authRepository,
+    PackRepository? packRepository,
+    RideRepository? rideRepository,
+    NavigationRepository? navigationRepository,
     this._network = true,
-  })  : _api = api ?? RideApi(),
-        _clock = clock ?? DateTime.now,
+  })  : _clock = clock ?? DateTime.now,
         _location = location ?? const DeviceLocationService(),
         _maps = maps ?? const GoogleMapsAdapter(),
-        _auth = auth ?? const FirebaseAuthService() {
+        _authService = authService ?? const FirebaseAuthService(),
+        _authRepo = authRepository ?? AuthRepository(),
+        _packRepo = packRepository ?? PackRepository(),
+        _rideRepo = rideRepository ?? RideRepository(),
+        _navRepo = navigationRepository ?? NavigationRepository() {
     dayStarted = _clock();
   }
 
@@ -158,11 +168,14 @@ class RideController extends ChangeNotifier {
 
   static const parked = LatLng(18.3706, 73.8540);
 
-  final RideApi _api;
   final DateTime Function() _clock;
   final LocationService _location;
   final MapAdapter _maps;
-  final AuthService _auth;
+  final AuthService _authService;
+  final AuthRepository _authRepo;
+  final PackRepository _packRepo;
+  final RideRepository _rideRepo;
+  final NavigationRepository _navRepo;
   final bool _network;
   final Distance _distance = const Distance();
 
@@ -740,19 +753,19 @@ class RideController extends ChangeNotifier {
   double kmTo(LatLng point) => _distance.as(LengthUnit.Kilometer, you, point);
 
   Future<void> restoreIdentity() async {
-    final user = _auth.currentUser;
+    final user = _authService.currentUser;
     if (user != null) {
       riderId = user.uid;
       final named = user.displayName?.trim() ?? '';
       riderName = named.isEmpty ? riderLabelFor(user.uid) : named;
       if (_network) {
         try {
-          final profile = await _api.ensureUser(uid: user.uid, name: riderName);
+          final profile = await _authRepo.ensureUser(uid: user.uid, name: riderName);
           riderName = profile.name;
           if (profile.rideCode.isNotEmpty) {
             code = profile.rideCode;
             _phase = RidePhase.live;
-            final adminId = await _api.rideAdmin(profile.rideCode);
+            final adminId = await _authRepo.rideAdmin(profile.rideCode);
             admin = adminId == user.uid;
             _joinedPack = adminId != null && adminId != user.uid;
           }
@@ -854,7 +867,7 @@ class RideController extends ChangeNotifier {
     if (sos?.id == id) sos = null;
     notifyListeners();
     if (_network) {
-      unawaited(_api.deleteRider(code, id).catchError((_) {}));
+      unawaited(_packRepo.deleteRider(code, id).catchError((_) {}));
     }
   }
 
@@ -979,7 +992,7 @@ class RideController extends ChangeNotifier {
           found = const [];
         }
       }
-      if (found.isEmpty) found = await _api.fuelAlong(road);
+      if (found.isEmpty) found = await _navRepo.fuelAlong(road);
       if (generation != _fuelGeneration || !fuelOn) return;
       pumps = [
         for (final pump in found)
@@ -1121,7 +1134,7 @@ class RideController extends ChangeNotifier {
         if (found.isNotEmpty) return found;
       } catch (_) {}
     }
-    return _api.fuelAlong(road);
+    return _navRepo.fuelAlong(road);
   }
 
   Future<List<TollPlaza>> _tollsOn(List<LatLng> road) async {
@@ -1131,7 +1144,7 @@ class RideController extends ChangeNotifier {
         if (found.isNotEmpty) return found;
       } catch (_) {}
     }
-    return _api.tollsAlong(road);
+    return _navRepo.tollsAlong(road);
   }
 
   Future<List<FuelPump>> _lookupFuel(LatLng here) async {
@@ -1139,12 +1152,12 @@ class RideController extends ChangeNotifier {
       try {
         return await _maps.nearbyFuel(here);
       } catch (error) {
-        final fallback = await _api.fuelNear(here);
+        final fallback = await _navRepo.fuelNear(here);
         if (fallback.isNotEmpty) return fallback;
         throw RideApiException(_bridgeMessage(error));
       }
     }
-    return _api.fuelNear(here);
+    return _navRepo.fuelNear(here);
   }
 
   void lookUp(String query) {
@@ -1328,7 +1341,7 @@ class RideController extends ChangeNotifier {
     );
     notifyListeners();
     if (_network && id == null) {
-      unawaited(_api.sendSos(
+      unawaited(_rideRepo.sendSos(
         code: code,
         id: alert.id,
         name: alert.name,
@@ -1404,7 +1417,7 @@ class RideController extends ChangeNotifier {
     }
     notifyListeners();
     if (!_network || paused || !onRide) return;
-    unawaited(_api.pushLocation(
+    unawaited(_packRepo.pushLocation(
       code: code,
       id: riderId,
       name: riderName,
@@ -1952,7 +1965,7 @@ class RideController extends ChangeNotifier {
     tab = RideTab.hud;
     notifyListeners();
     if (!_network || !wasOnRide || leavingCode.isEmpty) return;
-    unawaited(_api.deleteRideDocument(leavingCode).catchError((_) {}));
+    unawaited(_rideRepo.deleteRideDocument(leavingCode).catchError((_) {}));
     _rememberRide('', asAdmin: false);
   }
 
@@ -1967,7 +1980,7 @@ class RideController extends ChangeNotifier {
     notifyListeners();
     admin = false;
     _joinedPack = false;
-    if (_network) unawaited(_api.deleteRider(leavingCode, leavingId).catchError((_) {}));
+    if (_network) unawaited(_packRepo.deleteRider(leavingCode, leavingId).catchError((_) {}));
     _rememberRide('', asAdmin: false);
   }
 
@@ -2004,7 +2017,7 @@ class RideController extends ChangeNotifier {
   Future<void> _announceRider(String rideCode) async {
     final here = you;
     try {
-      await _api.addRider(
+      await _packRepo.addRider(
         code: rideCode,
         id: riderId,
         name: riderName,
@@ -2051,7 +2064,7 @@ class RideController extends ChangeNotifier {
     remote.clear();
     notifyListeners();
     if (_network) {
-      unawaited(_api.claimRide(next, riderId).then((_) {}, onError: (Object _) {}));
+      unawaited(_rideRepo.claimRide(next, riderId).then((_) {}, onError: (Object _) {}));
       unawaited(_announceRider(next));
       unawaited(_pushCurrentPlan());
       unawaited(_syncGroup());
@@ -2085,7 +2098,7 @@ class RideController extends ChangeNotifier {
     final savedCode = code;
     final updatedAt = max(_planUpdatedAt + 1, _clock().millisecondsSinceEpoch);
     try {
-      await _api.pushPlan(code: savedCode, planJson: encodeSharedPlan(_currentPlan(updatedAt)), updatedAt: updatedAt);
+      await _rideRepo.pushPlan(code: savedCode, planJson: encodeSharedPlan(_currentPlan(updatedAt)), updatedAt: updatedAt);
       if (code != savedCode) return;
       _planUpdatedAt = updatedAt;
       shareNote = '';
@@ -2380,12 +2393,12 @@ class RideController extends ChangeNotifier {
 
   void _rememberRide(String rideCode, {required bool asAdmin}) {
     if (!_network) return;
-    unawaited(_api.setMembership(riderId, rideCode: rideCode, role: asAdmin ? 'admin' : 'rider').then((_) {}, onError: (Object _) {}));
+    unawaited(_authRepo.setMembership(riderId, rideCode: rideCode, role: asAdmin ? 'admin' : 'rider').then((_) {}, onError: (Object _) {}));
   }
 
   Future<void> _adoptRide(String rideCode) async {
     try {
-      final adminId = await _api.rideAdmin(rideCode);
+      final adminId = await _authRepo.rideAdmin(rideCode);
       if (code != rideCode) return;
       admin = adminId == riderId;
       _joinedPack = adminId != null && adminId != riderId;
@@ -2401,7 +2414,7 @@ class RideController extends ChangeNotifier {
     try {
       final here = gpsFix;
       if (!paused && gpsLocked && here != null) {
-        await _api.pushLocation(
+        await _packRepo.pushLocation(
           code: code,
           id: riderId,
           name: riderName,
@@ -2410,11 +2423,11 @@ class RideController extends ChangeNotifier {
           at: _clock(),
         );
       }
-      final riders = await _api.riders(code);
+      final riders = await _packRepo.riders(code);
       remote
         ..clear()
         ..addEntries(riders.where((rider) => rider.id != riderId && !removed.contains(rider.id)).map((rider) => MapEntry(rider.id, rider)));
-      final record = await _api.rideRecord(code);
+      final record = await _rideRepo.rideRecord(code);
       if (record.sos != null) debugOfferSos(record.sos!);
       _acceptSharedPlan(record.planJson, record.planUpdatedAt);
       if (joinNote.startsWith('Joining ') || joinNote == 'Could not reach the ride.') {

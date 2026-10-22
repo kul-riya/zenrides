@@ -54,3 +54,19 @@ class RouteChoice {
   /// True when Google Routes returned this time with live traffic.
   final bool traffic;
 }
+
+class FuelPump {
+  const FuelPump({required this.id, required this.name, required this.point});
+
+  final String id;
+  final String name;
+  final LatLng point;
+}
+
+class TollPlaza {
+  const TollPlaza({required this.id, required this.name, required this.point});
+
+  final String id;
+  final String name;
+  final LatLng point;
+}

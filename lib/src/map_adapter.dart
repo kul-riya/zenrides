@@ -1,7 +1,6 @@
 import 'package:latlong2/latlong.dart';
 
 import 'maps_bridge.dart';
-import 'ride_api.dart' show FuelPump, TollPlaza;
 
 export 'maps_types.dart';
 

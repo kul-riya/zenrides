@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:zenrides/src/maps_types.dart';
-import 'package:zenrides/src/ride_api.dart';
 import 'package:zenrides/src/ride_controller.dart';
 import 'package:zenrides/src/ride_shell.dart';
 

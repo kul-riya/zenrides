@@ -1,6 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:zenrides/src/ride_api.dart';
+import 'package:zenrides/src/firestore_time.dart';
 
 void main() {
   test('a rider time can be a timestamp or the older millisecond number', () {

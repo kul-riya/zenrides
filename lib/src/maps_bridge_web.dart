@@ -5,7 +5,8 @@ import 'dart:js_interop';
 import 'package:latlong2/latlong.dart';
 
 import 'maps_types.dart';
-import 'ride_api.dart';
+
+const _mapsApiKey = String.fromEnvironment('MAPS_API_KEY');
 
 const bool mapsAvailable = true;
 
@@ -26,7 +27,7 @@ extension type _Script(JSObject _) implements JSObject {
 }
 
 Future<void> loadMaps() {
-  final key = RideApi.mapsKey;
+  final key = _mapsApiKey;
   if (key.isEmpty) return Future<void>.value();
   final done = Completer<void>();
   final script = _Script(_createElement('script'.toJS));

@@ -1,7 +1,6 @@
 import 'package:latlong2/latlong.dart';
 
 import 'maps_types.dart';
-import 'ride_api.dart';
 
 const bool mapsAvailable = false;
 
