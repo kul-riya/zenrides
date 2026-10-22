@@ -4,6 +4,7 @@ import 'package:latlong2/latlong.dart';
 import 'package:zenrides/src/maps_types.dart';
 import 'package:zenrides/src/ride_controller.dart';
 import 'package:zenrides/src/ride_shell.dart';
+import 'package:zenrides/src/trip_plan.dart';
 
 void main() {
   testWidgets('a day fills the screen, then the map fills it to place a point', (tester) async {

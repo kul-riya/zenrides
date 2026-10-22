@@ -5,6 +5,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import 'ride_controller.dart';
 import 'ride_map.dart';
+import 'trip_plan.dart';
 
 class RideScope extends InheritedNotifier<RideController> {
   const RideScope({super.key, required RideController ride, required super.child}) : super(notifier: ride);

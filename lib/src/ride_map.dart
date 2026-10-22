@@ -12,6 +12,7 @@ import 'package:latlong2/latlong.dart';
 import 'maps_bridge.dart';
 import 'ride_controller.dart';
 import 'ride_repository.dart' show SosFix;
+import 'trip_plan.dart';
 
 class RideMap extends StatefulWidget {
   const RideMap({super.key, required this.ride});

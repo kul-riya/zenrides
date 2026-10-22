@@ -9,12 +9,14 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'auth_repository.dart';
 import 'auth_service.dart';
+import 'geo.dart';
 import 'location_service.dart';
 import 'map_adapter.dart';
 import 'navigation_repository.dart';
 import 'pack_repository.dart';
 import 'repository_exception.dart';
 import 'ride_repository.dart';
+import 'trip_plan.dart';
 
 enum RideTab { hud, pack, toll, tours }
 
@@ -78,10 +80,6 @@ class MapRider {
   final int mark;
 }
 
-enum HaltKind { start, finish, stop, dayEnd, dayStart }
-
-enum PlanSlot { start, dayStart, finish, dayEnd, stop }
-
 /// Phone planning: the ride overview, one day's list, or the full-screen map.
 enum PlanScreen { overview, day, map }
 
@@ -105,22 +103,6 @@ class DayPath {
   final List<LatLng> points;
   final bool selected;
   final int? alternative;
-}
-
-class RideHalt {
-  const RideHalt({
-    required this.id,
-    required this.name,
-    required this.point,
-    this.day = 1,
-    this.kind = HaltKind.stop,
-  });
-
-  final String id;
-  final String name;
-  final LatLng point;
-  final int day;
-  final HaltKind kind;
 }
 
 class DaySummary {
@@ -299,7 +281,7 @@ class RideController extends ChangeNotifier {
     final drive = chosen;
     if (drive == null) return 0;
     if (planning && roadFitsSomeDay && !roadFitsDay) return 0;
-    return drive.distanceMeters > 0 ? drive.distanceMeters / 1000 : _lengthKm(drive.points);
+    return drive.distanceMeters > 0 ? drive.distanceMeters / 1000 : lengthKm(drive.points);
   }
 
   LatLng get you => gpsFix ?? startPoint ?? parked;
@@ -316,15 +298,15 @@ class RideController extends ChangeNotifier {
   double get remainingKm {
     final drive = chosen;
     if (drive == null) return 0;
-    final length = drive.distanceMeters > 0 ? drive.distanceMeters / 1000 : _lengthKm(drive.points);
-    if (gpsFix != null) return _remainingAlong(drive.points, you);
+    final length = drive.distanceMeters > 0 ? drive.distanceMeters / 1000 : lengthKm(drive.points);
+    if (gpsFix != null) return remainingAlong(drive.points, you);
     return length;
   }
 
   int get remainingMinutes {
     final drive = chosen;
     if (drive == null) return 0;
-    final length = drive.distanceMeters > 0 ? drive.distanceMeters / 1000 : _lengthKm(drive.points);
+    final length = drive.distanceMeters > 0 ? drive.distanceMeters / 1000 : lengthKm(drive.points);
     if (length <= 0) return 0;
     final seconds = drive.durationSeconds > 0 ? drive.durationSeconds * (remainingKm / length) : remainingKm / cruiseKmh * 3600;
     return max(1, (seconds / 60).round());
@@ -349,10 +331,10 @@ class RideController extends ChangeNotifier {
     if (!navigating) return null;
     final drive = chosen;
     if (drive == null || pumps.isEmpty) return null;
-    final hereKm = gpsFix != null ? _traveledAlong(drive.points, you) : 0.0;
+    final hereKm = gpsFix != null ? traveledAlong(drive.points, you) : 0.0;
     double? best;
     for (final pump in pumps) {
-      final ahead = (_traveledAlong(drive.points, pump.point) - hereKm) * 1000;
+      final ahead = (traveledAlong(drive.points, pump.point) - hereKm) * 1000;
       if (ahead < -80) continue;
       final gap = max(0.0, ahead);
       if (best == null || gap < best) best = gap;
@@ -493,17 +475,17 @@ class RideController extends ChangeNotifier {
   /// Day 2 starts where day 1 ended, so that place is one pin.
   List<RideHalt> get mapHalts {
     if (!planning) return const [];
-    final draft = planning;
-    final days = draft ? draftDays : tripDays;
+    final plan = _planSnapshot(draft: true);
+    final days = plan.days;
     final kept = <RideHalt>[];
     for (final halt in visibleHalts) {
-      if (halt.kind == HaltKind.dayStart && _samePlace(halt.point, _inheritedDayOrigin(halt.day, draft: draft))) {
+      if (halt.kind == HaltKind.dayStart && samePlace(halt.point, plan.inheritedOriginOf(halt.day))) {
         continue;
       }
-      if (halt.kind == HaltKind.dayStart && _samePlace(halt.point, dayEnd(halt.day, draft: draft)?.point)) {
+      if (halt.kind == HaltKind.dayStart && samePlace(halt.point, plan.endOf(halt.day)?.point)) {
         continue;
       }
-      final existing = kept.indexWhere((other) => _samePlace(other.point, halt.point));
+      final existing = kept.indexWhere((other) => samePlace(other.point, halt.point));
       if (existing >= 0) {
         final other = kept[existing];
         kept[existing] = RideHalt(
@@ -519,9 +501,7 @@ class RideController extends ChangeNotifier {
     }
     return [
       for (final halt in kept)
-        if (halt.kind == HaltKind.dayEnd &&
-            halt.day < days &&
-            _samePlace(_dayOrigin(halt.day + 1, draft: draft), halt.point))
+        if (halt.kind == HaltKind.dayEnd && halt.day < days && samePlace(plan.originOf(halt.day + 1), halt.point))
           RideHalt(
             id: halt.id,
             name: '${halt.name} · Day ${halt.day + 1} start',
@@ -534,18 +514,15 @@ class RideController extends ChangeNotifier {
     ];
   }
 
-  bool _samePlace(LatLng? a, LatLng? b) {
-    if (a == null || b == null) return false;
-    return _distance.as(LengthUnit.Meter, a, b) < 400;
-  }
-
   /// The road for the day shown on the map. Uses the driving line when it
   /// starts on this day and ends on one of this day's places.
   List<LatLng> get shownRoute {
-    final marks = _dayMarks(planning ? planDay : ridingDay, draft: planning);
+    final plan = _planSnapshot(draft: planning);
+    final day = planning ? planDay : ridingDay;
+    final marks = plan.marksOf(day);
     if (marks.length < 2) return const [];
     final road = chosen;
-    if (road != null && _roadFitsMarks(road.points, marks)) return road.points;
+    if (road != null && plan.roadFitsDay(road.points, day)) return road.points;
     return marks;
   }
 
@@ -553,15 +530,16 @@ class RideController extends ChangeNotifier {
   bool get roadFitsDay {
     final road = chosen;
     if (road == null) return false;
-    return _roadFitsMarks(road.points, _dayMarks(planning ? planDay : ridingDay, draft: planning));
+    return _planSnapshot(draft: planning).roadFitsDay(road.points, planning ? planDay : ridingDay);
   }
 
   /// Every day's road while planning, so day 1 and day 2 stay on the map together.
   List<DayPath> get planPaths {
     if (!planning) return const [];
+    final plan = _planSnapshot(draft: true);
     final paths = <DayPath>[];
     for (var day = 1; day <= draftDays; day++) {
-      final marks = _dayMarks(day, draft: true);
+      final marks = plan.marksOf(day);
       if (day == planDay && routes.isNotEmpty && roadFitsDay) {
         for (var i = 0; i < routes.length; i++) {
           final points = routes[i].points;
@@ -571,7 +549,7 @@ class RideController extends ChangeNotifier {
         continue;
       }
       final saved = _dayRoutes[day];
-      if (saved != null && saved.points.length >= 2 && _roadFitsMarks(saved.points, marks)) {
+      if (saved != null && saved.points.length >= 2 && plan.roadFitsDay(saved.points, day)) {
         paths.add(DayPath(day: day, points: saved.points, selected: true));
         continue;
       }
@@ -599,63 +577,39 @@ class RideController extends ChangeNotifier {
   bool get roadFitsSomeDay {
     final road = chosen;
     if (road == null) return false;
-    final days = planning ? draftDays : tripDays;
-    final draft = planning;
-    for (var day = 1; day <= days; day++) {
-      if (_roadFitsMarks(road.points, _dayMarks(day, draft: draft))) return true;
+    final plan = _planSnapshot(draft: planning);
+    for (var day = 1; day <= plan.days; day++) {
+      if (plan.roadFitsDay(road.points, day)) return true;
     }
     return false;
   }
 
-  List<LatLng> _dayMarks(int day, {required bool draft}) {
-    final total = draft ? draftDays : tripDays;
-    final origin = _dayOrigin(day, draft: draft);
-    final end = dayEnd(day, draft: draft)?.point ?? (day >= total ? (draft ? draftFinish : finishPoint) : null);
-    final marks = <LatLng>[];
-    void add(LatLng? point) {
-      if (point == null) return;
-      if (marks.isNotEmpty && _distance.as(LengthUnit.Meter, marks.last, point) < 400) return;
-      marks.add(point);
-    }
-
-    add(origin);
-    for (final stop in dayStops(day, draft: draft)) {
-      add(stop.point);
-    }
-    add(end);
-    return marks;
+  /// Everything about the open plan (saved or draft) as one immutable value,
+  /// so the origin/destination/marks geometry lives in trip_plan.dart instead
+  /// of being duplicated across private helpers here.
+  TripPlan _planSnapshot({required bool draft}) {
+    final start = draft ? draftStart : startPoint;
+    final finish = draft ? draftFinish : finishPoint;
+    final startMinutes = draft ? draftStartMinute : tripStartMinute;
+    final endMinutes = draft ? draftEndMinute : tripEndMinute;
+    return TripPlan(
+      days: draft ? draftDays : tripDays,
+      startDate: draft ? draftStartDate : tripStartDate,
+      start: start == null ? null : (point: start, name: draft ? draftStartName : startName),
+      finish: finish == null ? null : (point: finish, name: draft ? draftFinishName : finishName),
+      halts: draft ? draftHalts : halts,
+      clocks: {
+        for (final day in {...startMinutes.keys, ...endMinutes.keys})
+          day: DayClock(startMinute: startMinutes[day], endMinute: endMinutes[day]),
+      },
+    );
   }
 
-  bool _roadFitsMarks(List<LatLng> road, List<LatLng> marks) {
-    if (road.length < 2 || marks.length < 2) return false;
-    if (_distance.as(LengthUnit.Meter, road.first, marks.first) >= 800) return false;
-    final end = road.last;
-    for (final mark in marks) {
-      if (_distance.as(LengthUnit.Meter, end, mark) < 800) return true;
-    }
-    return false;
-  }
+  List<RideHalt> dayStops(int day, {bool draft = false}) => _planSnapshot(draft: draft).stopsOn(day);
 
-  List<RideHalt> dayStops(int day, {bool draft = false}) {
-    final source = draft ? draftHalts : halts;
-    return [for (final halt in source) if (halt.day == day && halt.kind == HaltKind.stop) halt];
-  }
+  RideHalt? dayEnd(int day, {bool draft = false}) => _planSnapshot(draft: draft).endOf(day);
 
-  RideHalt? dayEnd(int day, {bool draft = false}) {
-    final source = draft ? draftHalts : halts;
-    for (final halt in source) {
-      if (halt.day == day && halt.kind == HaltKind.dayEnd) return halt;
-    }
-    return null;
-  }
-
-  RideHalt? dayStart(int day, {bool draft = false}) {
-    final source = draft ? draftHalts : halts;
-    for (final halt in source) {
-      if (halt.day == day && halt.kind == HaltKind.dayStart) return halt;
-    }
-    return null;
-  }
+  RideHalt? dayStart(int day, {bool draft = false}) => _planSnapshot(draft: draft).customStartOf(day);
 
   /// Named once day 2 has an end: day 1's start, day 1's end, and day 2's end.
   String? get planChain {
@@ -996,7 +950,7 @@ class RideController extends ChangeNotifier {
       if (generation != _fuelGeneration || !fuelOn) return;
       pumps = [
         for (final pump in found)
-          if (_offPathMeters(road, pump.point) <= 400) pump,
+          if (offPathMeters(road, pump.point) <= 400) pump,
       ];
       pumpFit += 1;
       fuelNote = pumps.isEmpty ? 'No petrol pumps on this road.' : '${pumps.length} petrol pump${pumps.length == 1 ? '' : 's'} on this road.';
@@ -1099,13 +1053,13 @@ class RideController extends ChangeNotifier {
       for (final row in found) {
         if (planPumpsOn) {
           for (final pump in row.pumps) {
-            if (_offPathMeters(row.road, pump.point) > 800) continue;
+            if (offPathMeters(row.road, pump.point) > 800) continue;
             if (pumpIds.add(pump.id)) pumps.add(pump);
           }
         }
         if (planTollsOn) {
           for (final toll in row.tolls) {
-            if (_offPathMeters(row.road, toll.point) > 800) continue;
+            if (offPathMeters(row.road, toll.point) > 800) continue;
             if (tollIds.add(toll.id)) tolls.add(toll);
           }
         }
@@ -1403,15 +1357,15 @@ class RideController extends ChangeNotifier {
     final previous = gpsFix;
     if (previous != null) {
       final moved = _distance.as(LengthUnit.Meter, previous, point);
-      if (moved >= 4) _course = _bearing(previous, point);
+      if (moved >= 4) _course = headingTo(previous, point);
       traveledKm += moved / 1000;
     }
     gpsFix = point;
     gpsAt = _clock();
     final drive = chosen;
     if (navigating && drive != null && drive.points.length >= 2) {
-      final length = _lengthKm(drive.points);
-      navKm = min(length, _traveledAlong(drive.points, point));
+      final length = lengthKm(drive.points);
+      navKm = min(length, traveledAlong(drive.points, point));
       navArrived = length > 0 && navKm >= length - 0.05;
       _syncStep();
     }
@@ -1432,7 +1386,7 @@ class RideController extends ChangeNotifier {
     final previous = gpsFix;
     if (previous != null) {
       final moved = _distance.as(LengthUnit.Meter, previous, next);
-      if (moved >= 4) _course = _bearing(previous, next);
+      if (moved >= 4) _course = headingTo(previous, next);
       traveledKm += moved / 1000;
     }
     if (position.heading >= 0 && position.speed >= 0.8) _course = position.heading;
@@ -1450,7 +1404,7 @@ class RideController extends ChangeNotifier {
     var cursor = 0.0;
     for (var i = 1; i < points.length; i++) {
       final span = _distance.as(LengthUnit.Kilometer, points[i - 1], points[i]);
-      final t = _segmentT(points[i - 1], points[i], here);
+      final t = segmentT(points[i - 1], points[i], here);
       final on = LatLng(
         points[i - 1].latitude + (points[i].latitude - points[i - 1].latitude) * t,
         points[i - 1].longitude + (points[i].longitude - points[i - 1].longitude) * t,
@@ -1464,8 +1418,8 @@ class RideController extends ChangeNotifier {
     }
     if (cursor == 0) return 0;
     final target = min(cursor, at + lookAheadKm);
-    if (target - at < 0.01) return _bearing(points[points.length - 2], points.last);
-    return _bearing(_along(points, at / cursor), _along(points, target / cursor));
+    if (target - at < 0.01) return headingTo(points[points.length - 2], points.last);
+    return headingTo(along(points, at / cursor), along(points, target / cursor));
   }
 
   void _watchGps() {
@@ -1587,7 +1541,7 @@ class RideController extends ChangeNotifier {
     if (routes.isEmpty) return;
     final route = routes[selectedRoute.clamp(0, routes.length - 1)];
     if (route.points.length < 2) return;
-    if (!_roadFitsMarks(route.points, _dayMarks(day, draft: true))) return;
+    if (!_planSnapshot(draft: true).roadFitsDay(route.points, day)) return;
     _dayRoutes[day] = route;
   }
 
@@ -1703,7 +1657,7 @@ class RideController extends ChangeNotifier {
   void addTollAsHalt() {
     final toll = pickedToll;
     if (!planning || toll == null) return;
-    final day = _nearestPlanDay(toll.point);
+    final day = nearestDayForPoint(_planSnapshot(draft: true), _timingRoute, toll.point);
     pickedToll = null;
     if (day == null) {
       planNote = 'That toll is not on a planned day.';
@@ -1727,7 +1681,7 @@ class RideController extends ChangeNotifier {
     final stops = [...dayStops(day, draft: true), halt];
     final line = _timingRoute(day)?.points;
     if (line != null && line.length >= 2) {
-      stops.sort((a, b) => _traveledAlong(line, a.point).compareTo(_traveledAlong(line, b.point)));
+      stops.sort((a, b) => traveledAlong(line, a.point).compareTo(traveledAlong(line, b.point)));
     }
     draftHalts = [
       for (final existing in draftHalts)
@@ -1743,24 +1697,6 @@ class RideController extends ChangeNotifier {
     notifyListeners();
   }
 
-  int? _nearestPlanDay(LatLng point) {
-    int? bestDay;
-    var best = double.infinity;
-    for (var day = 1; day <= draftDays; day++) {
-      final saved = _timingRoute(day)?.points;
-      final marks = _dayMarks(day, draft: true);
-      final line = saved != null && saved.length >= 2 ? saved : marks;
-      if (line.length < 2) continue;
-      final gap = _offPathMeters(line, point);
-      if (gap < best) {
-        best = gap;
-        bestDay = day;
-      }
-    }
-    if (bestDay == null || best > 800) return null;
-    return bestDay;
-  }
-
   int? dayStartMinute(int day, {bool draft = true}) => (draft ? draftStartMinute : tripStartMinute)[day];
 
   int? dayEndMinute(int day, {bool draft = true}) => (draft ? draftEndMinute : tripEndMinute)[day];
@@ -1773,35 +1709,8 @@ class RideController extends ChangeNotifier {
   }
 
   /// "Estimated time", plus a clock when the day's start and the road can place it.
-  String haltEstimateLabel(int day, LatLng point, {bool draft = true}) {
-    final clock = _haltEstimateClock(day, point, draft: draft);
-    if (clock == null) return 'Estimated time';
-    return 'Estimated time · $clock';
-  }
-
-  String? _haltEstimateClock(int day, LatLng point, {required bool draft}) {
-    final start = dayStartMinute(day, draft: draft);
-    if (start == null) return null;
-    final route = _timingRoute(day);
-    final points = route?.points ?? const <LatLng>[];
-    if (route == null || points.length < 2) return null;
-    final length = _lengthKm(points);
-    if (length <= 0) return null;
-    final along = _traveledAlong(points, point).clamp(0.0, length);
-    final fraction = along / length;
-    final end = dayEndMinute(day, draft: draft);
-    final int span;
-    if (end != null) {
-      span = end >= start ? end - start : (24 * 60 - start) + end;
-    } else if (route.durationSeconds > 0) {
-      span = (route.durationSeconds / 60).round();
-    } else {
-      return null;
-    }
-    if (span <= 0) return formatClock(start);
-    final minute = (start + (fraction * span).round()) % (24 * 60);
-    return formatClock(minute);
-  }
+  String haltEstimateLabel(int day, LatLng point, {bool draft = true}) =>
+      haltEtaLabel(_planSnapshot(draft: draft), _timingRoute(day), day, point, formatClock);
 
   void lookUpPlan(String query) {
     _searchDebounce?.cancel();
@@ -2153,48 +2062,12 @@ class RideController extends ChangeNotifier {
 
   void _placeDraft(String name, LatLng point) {
     final id = 'halt-${_clock().microsecondsSinceEpoch}';
-    switch (planSlot) {
-      case PlanSlot.start:
-        draftStartName = name;
-        draftStart = point;
-      case PlanSlot.dayStart:
-        if (planDay <= 1) {
-          draftStartName = name;
-          draftStart = point;
-          break;
-        }
-        final inherited = _inheritedDayOrigin(planDay, draft: true);
-        final ownEnd = dayEnd(planDay, draft: true)?.point;
-        if (_samePlace(point, inherited) || _samePlace(point, ownEnd)) {
-          draftHalts = [
-            for (final halt in draftHalts)
-              if (!(halt.day == planDay && halt.kind == HaltKind.dayStart)) halt,
-          ];
-          planNote = inherited == null
-              ? 'Set day ${planDay - 1}\'s end. Day $planDay starts there.'
-              : 'Day $planDay starts at day ${planDay - 1}\'s end.';
-          break;
-        }
-        draftHalts = [
-          for (final halt in draftHalts)
-            if (!(halt.day == planDay && halt.kind == HaltKind.dayStart)) halt,
-          RideHalt(id: id, name: name, point: point, day: planDay, kind: HaltKind.dayStart),
-        ];
-      case PlanSlot.finish:
-        draftFinishName = name;
-        draftFinish = point;
-      case PlanSlot.dayEnd:
-        draftHalts = [
-          for (final halt in draftHalts)
-            if (!(halt.day == planDay && halt.kind == HaltKind.dayEnd)) halt,
-          RideHalt(id: id, name: name, point: point, day: planDay, kind: HaltKind.dayEnd),
-        ];
-      case PlanSlot.stop:
-        draftHalts = [
-          ...draftHalts,
-          RideHalt(id: id, name: name, point: point, day: planDay, kind: HaltKind.stop),
-        ];
-    }
+    final after = _planSnapshot(draft: true).place(planSlot, planDay, (point: point, name: name), id: id);
+    draftStart = after.start?.point;
+    draftStartName = after.start?.name ?? '';
+    draftFinish = after.finish?.point;
+    draftFinishName = after.finish?.name ?? '';
+    draftHalts = after.halts;
     picking = false;
     planHits = [];
     planNote = '';
@@ -2207,26 +2080,7 @@ class RideController extends ChangeNotifier {
     notifyListeners();
   }
 
-  LatLng? _legOrigin(int day) => _dayOrigin(day, draft: true);
-
-  /// Where a day begins. Later days begin at the previous day's end.
-  /// A start dropped on that same point, or on this day's own end, stays there.
-  LatLng? _dayOrigin(int day, {required bool draft}) {
-    final tripStart = draft ? draftStart : startPoint;
-    if (day <= 1) return tripStart;
-    final inherited = _inheritedDayOrigin(day, draft: draft);
-    final custom = dayStart(day, draft: draft);
-    if (custom == null) return inherited;
-    if (_samePlace(custom.point, inherited) || _samePlace(custom.point, dayEnd(day, draft: draft)?.point)) {
-      return inherited;
-    }
-    return custom.point;
-  }
-
-  LatLng? _inheritedDayOrigin(int day, {required bool draft}) {
-    if (day <= 1) return draft ? draftStart : startPoint;
-    return dayEnd(day - 1, draft: draft)?.point ?? (draft ? draftStart : startPoint);
-  }
+  LatLng? _legOrigin(int day) => _planSnapshot(draft: true).originOf(day);
 
   ({LatLng point, String name})? _planDestination() {
     if (planSlot == PlanSlot.finish && draftFinish != null) {
@@ -2254,25 +2108,8 @@ class RideController extends ChangeNotifier {
 
   /// Where this day's road should finish. A day that ends where it started
   /// uses its last stop, so a loop is not drawn as the next day's road.
-  ({LatLng point, String name})? _dayLegDestination([int? day]) {
-    final which = day ?? planDay;
-    final origin = _legOrigin(which);
-    final end = dayEnd(which, draft: true);
-    if (end != null && (origin == null || _distance.as(LengthUnit.Meter, origin, end.point) >= 400)) {
-      return (point: end.point, name: end.name);
-    }
-    for (final stop in dayStops(which, draft: true).reversed) {
-      if (origin == null || _distance.as(LengthUnit.Meter, origin, stop.point) >= 400) {
-        return (point: stop.point, name: stop.name);
-      }
-    }
-    if (which >= draftDays &&
-        draftFinish != null &&
-        (origin == null || _distance.as(LengthUnit.Meter, origin, draftFinish!) >= 400)) {
-      return (point: draftFinish!, name: draftFinishName.isEmpty ? 'Finish' : draftFinishName);
-    }
-    return null;
-  }
+  ({LatLng point, String name})? _dayLegDestination([int? day]) =>
+      _planSnapshot(draft: true).destinationOf(day ?? planDay);
 
   void _loadPlanRoads() {
     for (var day = 1; day <= draftDays; day++) {
@@ -2293,8 +2130,10 @@ class RideController extends ChangeNotifier {
       return;
     }
     final saved = _dayRoutes[day];
-    final marks = _dayMarks(day, draft: true);
-    if (!alternatives && saved != null && saved.points.length >= 2 && _roadFitsMarks(saved.points, marks)) {
+    if (!alternatives &&
+        saved != null &&
+        saved.points.length >= 2 &&
+        _planSnapshot(draft: true).roadFitsDay(saved.points, day)) {
       return;
     }
     if (!_maps.available) {
@@ -2438,97 +2277,6 @@ class RideController extends ChangeNotifier {
     }
     notifyListeners();
   }
-}
-
-double _traveledAlong(List<LatLng> points, LatLng here) {
-  final total = _lengthKm(points);
-  return max(0, total - _remainingAlong(points, here));
-}
-
-double _offPathMeters(List<LatLng> points, LatLng here) {
-  if (points.length < 2) return double.infinity;
-  const distance = Distance();
-  var best = double.infinity;
-  for (var i = 1; i < points.length; i++) {
-    final t = _segmentT(points[i - 1], points[i], here);
-    final on = LatLng(
-      points[i - 1].latitude + (points[i].latitude - points[i - 1].latitude) * t,
-      points[i - 1].longitude + (points[i].longitude - points[i - 1].longitude) * t,
-    );
-    final gap = distance.as(LengthUnit.Meter, here, on);
-    if (gap < best) best = gap;
-  }
-  return best;
-}
-
-double _remainingAlong(List<LatLng> points, LatLng here) {
-  if (points.length < 2) return 0;
-  const distance = Distance();
-  var best = double.infinity;
-  var traveled = 0.0;
-  var cursor = 0.0;
-  var total = 0.0;
-  for (var i = 1; i < points.length; i++) {
-    final span = distance.as(LengthUnit.Kilometer, points[i - 1], points[i]);
-    final t = _segmentT(points[i - 1], points[i], here);
-    final on = LatLng(
-      points[i - 1].latitude + (points[i].latitude - points[i - 1].latitude) * t,
-      points[i - 1].longitude + (points[i].longitude - points[i - 1].longitude) * t,
-    );
-    final gap = distance.as(LengthUnit.Kilometer, here, on);
-    if (gap < best) {
-      best = gap;
-      traveled = cursor + span * t;
-    }
-    cursor += span;
-    total += span;
-  }
-  return max(0, total - traveled);
-}
-
-double _segmentT(LatLng a, LatLng b, LatLng here) {
-  final dx = b.longitude - a.longitude;
-  final dy = b.latitude - a.latitude;
-  final denom = dx * dx + dy * dy;
-  if (denom == 0) return 0;
-  return (((here.longitude - a.longitude) * dx + (here.latitude - a.latitude) * dy) / denom).clamp(0.0, 1.0);
-}
-
-double _bearing(LatLng from, LatLng to) {
-  final lat1 = from.latitude * pi / 180;
-  final lat2 = to.latitude * pi / 180;
-  final dLng = (to.longitude - from.longitude) * pi / 180;
-  final y = sin(dLng) * cos(lat2);
-  final x = cos(lat1) * sin(lat2) - sin(lat1) * cos(lat2) * cos(dLng);
-  return (atan2(y, x) * 180 / pi + 360) % 360;
-}
-
-double _lengthKm(List<LatLng> points) {
-  const distance = Distance();
-  var total = 0.0;
-  for (var i = 1; i < points.length; i++) {
-    total += distance.as(LengthUnit.Kilometer, points[i - 1], points[i]);
-  }
-  return total;
-}
-
-LatLng _along(List<LatLng> points, double progress) {
-  final length = _lengthKm(points);
-  if (length == 0 || points.isEmpty) return const LatLng(18.37, 73.85);
-  var target = length * (progress - progress.floor());
-  const distance = Distance();
-  for (var i = 1; i < points.length; i++) {
-    final span = distance.as(LengthUnit.Kilometer, points[i - 1], points[i]);
-    if (target <= span || i == points.length - 1) {
-      final t = span == 0 ? 0.0 : (target / span).clamp(0.0, 1.0);
-      return LatLng(
-        points[i - 1].latitude + (points[i].latitude - points[i - 1].latitude) * t,
-        points[i - 1].longitude + (points[i].longitude - points[i - 1].longitude) * t,
-      );
-    }
-    target -= span;
-  }
-  return points.last;
 }
 
 class SharedPlan {

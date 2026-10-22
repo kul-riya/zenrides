@@ -6,6 +6,7 @@ import 'package:zenrides/src/map_adapter.dart';
 import 'package:zenrides/src/pack_repository.dart';
 import 'package:zenrides/src/ride_controller.dart';
 import 'package:zenrides/src/ride_repository.dart';
+import 'package:zenrides/src/trip_plan.dart';
 
 class _FakeLocation implements LocationService {
   const _FakeLocation(this.fix);
