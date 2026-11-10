@@ -27,6 +27,15 @@ android {
         // flag during build.
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        manifestPlaceholders["MAPS_API_KEY"] = run {
+            val env = rootProject.file("../.env")
+            if (!env.exists()) return@run ""
+            env.readLines().firstNotNullOfOrNull { line ->
+                val trimmed = line.trim()
+                if (!trimmed.startsWith("MAPS_API_KEY=")) null
+                else trimmed.substringAfter("=").trim().removeSurrounding("\"").removeSurrounding("'")
+            } ?: ""
+        }
     }
 
     buildTypes {

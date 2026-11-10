@@ -1,7 +1,7 @@
 import 'package:latlong2/latlong.dart';
 
-import 'geo.dart';
-import 'maps_types.dart' show RouteChoice;
+import '../geo.dart';
+import '../navigation/maps_types.dart' show RouteChoice;
 
 enum HaltKind { start, finish, stop, dayEnd, dayStart }
 

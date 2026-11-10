@@ -5,7 +5,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import 'ride_controller.dart';
 import 'ride_map.dart';
-import 'trip_plan.dart';
+import '../planning/trip_plan.dart';
 
 class RideScope extends InheritedNotifier<RideController> {
   const RideScope({super.key, required RideController ride, required super.child}) : super(notifier: ride);
@@ -25,26 +25,101 @@ class RideShell extends StatelessWidget {
     final ride = RideScope.of(context);
     return Scaffold(
       backgroundColor: const Color(0xFFD7DEE6),
+      appBar: ride.signedIn
+          ? AppBar(
+              backgroundColor: Colors.white,
+              elevation: 1,
+              centerTitle: false,
+              titleSpacing: 16,
+              title: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('ZenRides', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: Color(0xFF64748B))),
+                  Text(
+                    ride.onRide ? ride.code : 'Not on a ride',
+                    style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: Color(0xFF0F172A)),
+                  ),
+                ],
+              ),
+              actions: [
+                Builder(
+                  builder: (context) => IconButton(
+                    tooltip: 'Profile',
+                    onPressed: () => Scaffold.of(context).openEndDrawer(),
+                    icon: const Icon(Icons.menu, color: Color(0xFF0F172A)),
+                  ),
+                ),
+              ],
+            )
+          : null,
+      endDrawer: const _ProfileDrawer(),
       body: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 430),
           child: ColoredBox(
             color: const Color(0xFFEEF1F5),
             child: SafeArea(
-              child: Column(
-                children: [
-                  Expanded(
-                    child: switch (ride.tab) {
-                      RideTab.hud => const HudPage(),
-                      RideTab.pack => const PackPage(),
-                      RideTab.toll => const TollPage(),
-                      RideTab.tours => const ToursPage(),
-                    },
-                  ),
-                  const RideNav(),
-                ],
-              ),
+              child: ride.signedIn
+                  ? Column(
+                      children: [
+                        Expanded(
+                          child: switch (ride.tab) {
+                            RideTab.hud => const HudPage(),
+                            RideTab.pack => const PackPage(),
+                            RideTab.toll => const TollPage(),
+                            RideTab.tours => const ToursPage(),
+                          },
+                        ),
+                        const RideNav(),
+                      ],
+                    )
+                  : const Center(child: Text('You are signed out.')),
             ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+
+class _ProfileDrawer extends StatelessWidget {
+  const _ProfileDrawer();
+
+  @override
+  Widget build(BuildContext context) {
+    final ride = RideScope.of(context);
+    return Drawer(
+      child: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const CircleAvatar(
+                backgroundColor: Color(0xFF0F172A),
+                child: Icon(Icons.person, color: Colors.white),
+              ),
+              const SizedBox(height: 12),
+              Text(ride.riderName, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 20)),
+              const SizedBox(height: 4),
+              Text(
+                ride.onRide ? '${ride.youRole} · ${ride.code}' : 'Not on a ride',
+                style: const TextStyle(color: Color(0xFF64748B)),
+              ),
+              const Spacer(),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton(
+                  onPressed: () {
+                    Navigator.pop(context);
+                    ride.logOut();
+                  },
+                  child: const Text('Log out'),
+                ),
+              ),
+            ],
           ),
         ),
       ),
@@ -65,15 +140,15 @@ class _HudPageState extends State<HudPage> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    if (!RideScope.of(context).planning && _planCollapsed) _planCollapsed = false;
+    if (!RideScope.of(context).plan.planning && _planCollapsed) _planCollapsed = false;
   }
 
   @override
   Widget build(BuildContext context) {
     final ride = RideScope.of(context);
-    final dayPage = ride.planning && ride.planScreen == PlanScreen.day;
-    final mapFull = ride.planning && ride.planScreen == PlanScreen.map;
-    final planOpen = ride.planning && !mapFull && !dayPage;
+    final dayPage = ride.plan.planning && ride.plan.planScreen == PlanScreen.day;
+    final mapFull = ride.plan.planning && ride.plan.planScreen == PlanScreen.map;
+    final planOpen = ride.plan.planning && !mapFull && !dayPage;
     final collapsed = planOpen && _planCollapsed;
     final edgeToEdge = mapFull || dayPage;
     return Stack(
@@ -89,33 +164,20 @@ class _HudPageState extends State<HudPage> {
                     _PlannerCard(
                       collapsed: collapsed,
                       onToggle: () => setState(() => _planCollapsed = !_planCollapsed),
-                    )
-                  else
-                    const _HeadlineCard(),
-                  if (!ride.planning && ride.canPlan) ...[
-                    const SizedBox(height: 8),
-                    SizedBox(
-                      width: double.infinity,
-                      child: FilledButton.icon(
-                        onPressed: ride.beginPlanning,
-                        icon: const Icon(Icons.alt_route),
-                        label: const Text('Plan a ride'),
-                      ),
                     ),
-                  ],
-                  if (!ride.planning && ride.notice != null) ...[
+                  if (!ride.plan.planning && ride.radio.notice != null) ...[
                     const SizedBox(height: 8),
-                    _NoticeCard(notice: ride.notice!),
+                    _NoticeCard(notice: ride.radio.notice!),
                   ],
-                  if (!ride.planning) ...[
+                  if (!ride.plan.planning) ...[
                     const SizedBox(height: 8),
                     const _TodayCard(),
                   ],
-                  if (!ride.planning && ride.visibleSos != null) ...[
+                  if (!ride.plan.planning && ride.radio.visibleSos != null) ...[
                     const SizedBox(height: 8),
                     const _SosCard(),
                   ],
-                  if (!ride.planning && ride.nearbyHazards.isNotEmpty) ...[
+                  if (!ride.plan.planning && ride.nav.nearbyHazards.isNotEmpty) ...[
                     const SizedBox(height: 8),
                     const _RoadHazardCard(),
                   ],
@@ -133,7 +195,7 @@ class _HudPageState extends State<HudPage> {
                 ),
               ),
             ),
-            if (!ride.planning) const _BroadcastRow(),
+            if (!ride.plan.planning) const _BroadcastRow(),
           ],
         ),
         if (dayPage) Positioned.fill(child: PointerInterceptor(child: const _DayPlanPage())),
@@ -148,11 +210,11 @@ class _DayPlanPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ride = RideScope.of(context);
-    final day = ride.planDay;
+    final day = ride.plan.planDay;
     final color = dayColor(day);
-    final timing = ride.dayTiming(day);
-    final stops = ride.dayStops(day, draft: true);
-    final end = ride.dayEnd(day, draft: true);
+    final timing = ride.plan.dayTiming(day);
+    final stops = ride.plan.dayStops(day, draft: true);
+    final end = ride.plan.dayEnd(day, draft: true);
     return ColoredBox(
       color: Colors.white,
       child: ListView(
@@ -161,7 +223,7 @@ class _DayPlanPage extends StatelessWidget {
           Row(
             children: [
               IconButton(
-                onPressed: ride.closePlanDay,
+                onPressed: ride.plan.closePlanDay,
                 icon: const Icon(Icons.arrow_back),
                 tooltip: 'Back',
               ),
@@ -173,9 +235,9 @@ class _DayPlanPage extends StatelessWidget {
                       'Day $day',
                       style: TextStyle(fontWeight: FontWeight.w800, fontSize: 22, color: color),
                     ),
-                    if (ride.dateForDay(day, draft: true) != null)
+                    if (ride.plan.dateForDay(day, draft: true) != null)
                       Text(
-                        formatPlanDate(ride.dateForDay(day, draft: true)!),
+                        formatPlanDate(ride.plan.dateForDay(day, draft: true)!),
                         style: TextStyle(fontWeight: FontWeight.w700, color: color),
                       ),
                   ],
@@ -187,7 +249,7 @@ class _DayPlanPage extends StatelessWidget {
             Padding(
               padding: const EdgeInsets.only(left: 12, bottom: 8),
               child: Text(
-                '$timing${ride.dayTraffic(day) ? ' · live traffic' : ''}',
+                '$timing${ride.plan.dayTraffic(day) ? ' · live traffic' : ''}',
                 style: TextStyle(fontWeight: FontWeight.w800, color: color),
               ),
             ),
@@ -196,9 +258,9 @@ class _DayPlanPage extends StatelessWidget {
             subtitle: _startLabel(ride, day),
             icon: Icons.trip_origin,
             color: color,
-            onTap: () => ride.pickOnMap(day == 1 ? PlanSlot.start : PlanSlot.dayStart),
+            onTap: () => ride.plan.pickOnMap(day == 1 ? PlanSlot.start : PlanSlot.dayStart),
             onClear: _startClear(ride, day),
-            timeLabel: _clockLabel(ride.dayStartMinute(day), empty: 'Set start time'),
+            timeLabel: _clockLabel(ride.plan.dayStartMinute(day), empty: 'Set start time'),
             onTime: () => pickDayClock(context, ride, day, start: true),
           ),
           _DayPlaceRow(
@@ -206,9 +268,9 @@ class _DayPlanPage extends StatelessWidget {
             subtitle: end?.name ?? 'Choose on the map',
             icon: Icons.flag_outlined,
             color: color,
-            onTap: () => ride.pickOnMap(PlanSlot.dayEnd),
-            onClear: end == null ? null : () => ride.removeDraftHalt(end.id),
-            timeLabel: _clockLabel(ride.dayEndMinute(day), empty: 'Set end time'),
+            onTap: () => ride.plan.pickOnMap(PlanSlot.dayEnd),
+            onClear: end == null ? null : () => ride.plan.removeDraftHalt(end.id),
+            timeLabel: _clockLabel(ride.plan.dayEndMinute(day), empty: 'Set end time'),
             onTime: () => pickDayClock(context, ride, day, start: false),
           ),
           const Padding(
@@ -223,15 +285,15 @@ class _DayPlanPage extends StatelessWidget {
           for (final stop in stops)
             _DayPlaceRow(
               title: stop.name,
-              subtitle: ride.haltEstimateLabel(day, stop.point),
+              subtitle: ride.plan.haltEstimateLabel(day, stop.point),
               icon: Icons.place_outlined,
               color: color,
-              onTap: () => ride.pickOnMap(PlanSlot.stop),
-              onClear: () => ride.removeDraftHalt(stop.id),
+              onTap: () => ride.plan.pickOnMap(PlanSlot.stop),
+              onClear: () => ride.plan.removeDraftHalt(stop.id),
             ),
           const SizedBox(height: 8),
           _PopTap(
-            onTap: () => ride.pickOnMap(PlanSlot.stop),
+            onTap: () => ride.plan.pickOnMap(PlanSlot.stop),
             radius: 28,
             highlight: const Color(0xFF1D4ED8),
             child: Material(
@@ -257,21 +319,21 @@ class _DayPlanPage extends StatelessWidget {
 
   String _startLabel(RideController ride, int day) {
     if (day <= 1) {
-      if (ride.draftStart == null) return 'Choose on the map';
-      return ride.draftStartName.isEmpty ? 'Start' : ride.draftStartName;
+      if (ride.plan.draftStart == null) return 'Choose on the map';
+      return ride.plan.draftStartName.isEmpty ? 'Start' : ride.plan.draftStartName;
     }
-    final custom = ride.dayStart(day, draft: true);
+    final custom = ride.plan.dayStart(day, draft: true);
     if (custom != null) return custom.name;
-    final inherited = ride.dayEnd(day - 1, draft: true);
+    final inherited = ride.plan.dayEnd(day - 1, draft: true);
     if (inherited != null) return 'Starts at day ${day - 1} end · ${inherited.name}';
     return 'Choose on the map';
   }
 
   VoidCallback? _startClear(RideController ride, int day) {
-    if (day <= 1) return ride.draftStart == null ? null : () => ride.removeDraftHalt('plan-start');
-    final custom = ride.dayStart(day, draft: true);
+    if (day <= 1) return ride.plan.draftStart == null ? null : () => ride.plan.removeDraftHalt('plan-start');
+    final custom = ride.plan.dayStart(day, draft: true);
     if (custom == null) return null;
-    return () => ride.removeDraftHalt(custom.id);
+    return () => ride.plan.removeDraftHalt(custom.id);
   }
 
   String _clockLabel(int? minute, {required String empty}) {
@@ -445,44 +507,6 @@ class _BoundMap extends StatelessWidget {
   }
 }
 
-class _HeadlineCard extends StatelessWidget {
-  const _HeadlineCard();
-
-  @override
-  Widget build(BuildContext context) {
-    final ride = RideScope.of(context);
-    return _card(
-      child: Row(
-        children: [
-          const CircleAvatar(backgroundColor: Color(0xFF0F172A), child: Icon(Icons.navigation, color: Colors.white, size: 18)),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  ride.ended
-                      ? 'Ride ended'
-                      : ride.routeKm > 0
-                          ? 'Follow the route for ${ride.routeKm.toStringAsFixed(1)} km'
-                          : ride.gpsFix != null
-                              ? 'Location set on the map'
-                              : 'Waiting for a GPS fix',
-                  style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15),
-                ),
-                Text(
-                  ride.ended ? 'The route is no longer live.' : 'Cruising speed: maintain the pack stagger',
-                  style: const TextStyle(color: Color(0xFF64748B), fontSize: 12),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
 class _NoticeCard extends StatelessWidget {
   const _NoticeCard({required this.notice});
 
@@ -512,7 +536,7 @@ class _NoticeCard extends StatelessWidget {
             ),
           ),
           TextButton(
-            onPressed: ride.dismissNotice,
+            onPressed: ride.radio.dismissNotice,
             child: const Text('ACK', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800)),
           ),
         ],
@@ -527,8 +551,8 @@ class _TodayCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ride = RideScope.of(context);
-    final next = ride.nextHalt;
-    final summary = ride.summary;
+    final next = ride.plan.nextHalt;
+    final summary = ride.plan.summary;
     return _card(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -536,14 +560,14 @@ class _TodayCard extends StatelessWidget {
           Row(
             children: [
               const Expanded(child: Text("Today's plan", style: TextStyle(fontWeight: FontWeight.w800))),
-              if (ride.todayHasPlan)
-                TextButton(onPressed: ride.endDay, child: const Text('End the day')),
+              if (ride.plan.todayHasPlan)
+                TextButton(onPressed: ride.plan.endDay, child: const Text('End the day')),
             ],
           ),
           if (next == null)
             Text(
               ride.canPlan
-                  ? (ride.tripDays > 1 ? 'Day ${ride.ridingDay} has no halt yet.' : 'No halts saved yet.')
+                  ? (ride.plan.tripDays > 1 ? 'Day ${ride.plan.ridingDay} has no halt yet.' : 'No halts saved yet.')
                   : 'No halts saved yet. The ride lead plans this one.',
               style: const TextStyle(color: Color(0xFF64748B), fontSize: 13),
             )
@@ -551,7 +575,7 @@ class _TodayCard extends StatelessWidget {
             Text('Next halt · ${next.name} · ${formatKm(ride.kmTo(next.point))} left', style: const TextStyle(fontWeight: FontWeight.w700)),
           const SizedBox(height: 4),
           Text(
-            ride.chaiNames.isEmpty ? 'Nobody has stopped for chai.' : 'Chai: ${ride.chaiNames.join(', ')}',
+            ride.radio.chaiNames.isEmpty ? 'Nobody has stopped for chai.' : 'Chai: ${ride.radio.chaiNames.join(', ')}',
             style: const TextStyle(color: Color(0xFF64748B), fontSize: 13),
           ),
           if (summary != null) ...[
@@ -573,7 +597,7 @@ class _SosCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ride = RideScope.of(context);
-    final alert = ride.visibleSos!;
+    final alert = ride.radio.visibleSos!;
     final spot = '${alert.lat.toStringAsFixed(5)}, ${alert.lng.toStringAsFixed(5)}';
     return Container(
       padding: const EdgeInsets.all(12),
@@ -597,7 +621,7 @@ class _SosCard extends StatelessWidget {
                 child: const Text('Call'),
               ),
               const SizedBox(width: 8),
-              TextButton(onPressed: ride.dismissSos, child: const Text('Dismiss')),
+              TextButton(onPressed: ride.radio.dismissSos, child: const Text('Dismiss')),
             ],
           ),
         ],
@@ -612,7 +636,7 @@ class _RoadHazardCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ride = RideScope.of(context);
-    final nearby = ride.nearbyHazards;
+    final nearby = ride.nav.nearbyHazards;
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(10),
@@ -667,21 +691,21 @@ class _PlannerCard extends StatelessWidget {
                   const Text('Days', style: TextStyle(fontWeight: FontWeight.w800)),
                   IconButton(
                     visualDensity: VisualDensity.compact,
-                    onPressed: ride.draftDays > 1 ? () => ride.setDraftDays(ride.draftDays - 1) : null,
+                    onPressed: ride.plan.draftDays > 1 ? () => ride.plan.setDraftDays(ride.plan.draftDays - 1) : null,
                     icon: const Icon(Icons.remove_circle_outline),
                   ),
-                  Text('${ride.draftDays}', style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
+                  Text('${ride.plan.draftDays}', style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
                   IconButton(
                     visualDensity: VisualDensity.compact,
-                    onPressed: ride.draftDays < 14 ? () => ride.setDraftDays(ride.draftDays + 1) : null,
+                    onPressed: ride.plan.draftDays < 14 ? () => ride.plan.setDraftDays(ride.plan.draftDays + 1) : null,
                     icon: const Icon(Icons.add_circle_outline),
                   ),
                   TextButton(
                     onPressed: () => confirmDeleteRide(context, ride),
                     child: const Text('Delete ride'),
                   ),
-                  TextButton(onPressed: ride.cancelPlanning, child: const Text('Cancel')),
-                  FilledButton(onPressed: ride.savePlan, child: const Text('Save')),
+                  TextButton(onPressed: ride.plan.cancelPlanning, child: const Text('Cancel')),
+                  FilledButton(onPressed: ride.plan.savePlan, child: const Text('Save')),
                 ],
               ),
               Align(
@@ -689,18 +713,18 @@ class _PlannerCard extends StatelessWidget {
                 child: OutlinedButton.icon(
                   onPressed: () => pickPlanDates(context, ride),
                   icon: const Icon(Icons.calendar_month),
-                  label: Text(ride.draftDateLabel.isEmpty ? 'Choose dates' : ride.draftDateLabel),
+                  label: Text(ride.plan.draftDateLabel.isEmpty ? 'Choose dates' : ride.plan.draftDateLabel),
                 ),
               ),
               Wrap(
                 spacing: 8,
                 runSpacing: 8,
                 children: [
-                  for (var day = 1; day <= ride.draftDays; day++)
-                    ride.planDay == day
+                  for (var day = 1; day <= ride.plan.draftDays; day++)
+                    ride.plan.planDay == day
                         ? FilledButton(
                             style: FilledButton.styleFrom(backgroundColor: dayColor(day)),
-                            onPressed: () => ride.openPlanDay(day),
+                            onPressed: () => ride.plan.openPlanDay(day),
                             child: _dayButtonLabel(ride, day),
                           )
                         : OutlinedButton(
@@ -708,7 +732,7 @@ class _PlannerCard extends StatelessWidget {
                               foregroundColor: dayColor(day),
                               side: BorderSide(color: dayColor(day)),
                             ),
-                            onPressed: () => ride.openPlanDay(day),
+                            onPressed: () => ride.plan.openPlanDay(day),
                             child: _dayButtonLabel(ride, day),
                           ),
                 ],
@@ -723,28 +747,28 @@ class _PlannerCard extends StatelessWidget {
                       label: 'Fuel pumps',
                       icon: Icons.local_gas_station,
                       color: const Color(0xFFE11D2E),
-                      on: ride.planPumpsOn,
-                      onPressed: ride.togglePlanPumps,
+                      on: ride.plan.planPumpsOn,
+                      onPressed: ride.plan.togglePlanPumps,
                     ),
                     _planOverlayButton(
                       label: 'Toll nakas',
                       icon: Icons.toll,
                       color: const Color(0xFFB45309),
-                      on: ride.planTollsOn,
-                      onPressed: ride.togglePlanTolls,
+                      on: ride.plan.planTollsOn,
+                      onPressed: ride.plan.togglePlanTolls,
                     ),
                   ],
                 ),
               ),
-              if (ride.planPumpNote.isNotEmpty)
+              if (ride.plan.planPumpNote.isNotEmpty)
                 Padding(
                   padding: const EdgeInsets.only(top: 6),
-                  child: Text(ride.planPumpNote, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
+                  child: Text(ride.plan.planPumpNote, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
                 ),
-              if (ride.planTollNote.isNotEmpty)
+              if (ride.plan.planTollNote.isNotEmpty)
                 Padding(
                   padding: const EdgeInsets.only(top: 4),
-                  child: Text(ride.planTollNote, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
+                  child: Text(ride.plan.planTollNote, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
                 ),
               Center(
                 child: IconButton(
@@ -763,7 +787,7 @@ class _PlannerCard extends StatelessWidget {
                     : Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
-                          if (ride.planTimingLabel.isNotEmpty)
+                          if (ride.plan.planTimingLabel.isNotEmpty)
                             Padding(
                               padding: const EdgeInsets.only(top: 8),
                               child: DecoratedBox(
@@ -775,10 +799,10 @@ class _PlannerCard extends StatelessWidget {
                                 child: Padding(
                                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                                   child: Text(
-                                    ride.planTimingLabel,
+                                    ride.plan.planTimingLabel,
                                     style: TextStyle(
                                       fontWeight: FontWeight.w800,
-                                      color: ride.wholeRide ? const Color(0xFF0F172A) : dayColor(ride.planDay),
+                                      color: ride.plan.wholeRide ? const Color(0xFF0F172A) : dayColor(ride.plan.planDay),
                                     ),
                                   ),
                                 ),
@@ -807,18 +831,18 @@ class _PlanPlace {
 
 List<_PlanPlace> _planPlaces(RideController ride) {
   final places = <_PlanPlace>[];
-  for (var day = 1; day <= ride.draftDays; day++) {
+  for (var day = 1; day <= ride.plan.draftDays; day++) {
     if (day <= 1) {
-      if (ride.draftStart != null) {
+      if (ride.plan.draftStart != null) {
         places.add(_PlanPlace(
           day: day,
           role: 'Start',
-          name: ride.draftStartName.isEmpty ? 'Start' : ride.draftStartName,
+          name: ride.plan.draftStartName.isEmpty ? 'Start' : ride.plan.draftStartName,
         ));
       }
     } else {
-      final custom = ride.dayStart(day, draft: true);
-      final inherited = ride.dayEnd(day - 1, draft: true);
+      final custom = ride.plan.dayStart(day, draft: true);
+      final inherited = ride.plan.dayEnd(day - 1, draft: true);
       if (custom != null) {
         places.add(_PlanPlace(day: day, role: 'Start', name: custom.name));
       } else if (inherited != null) {
@@ -830,15 +854,15 @@ List<_PlanPlace> _planPlaces(RideController ride) {
         ));
       }
     }
-    for (final halt in ride.dayStops(day, draft: true)) {
+    for (final halt in ride.plan.dayStops(day, draft: true)) {
       places.add(_PlanPlace(
         day: day,
         role: 'Halt',
         name: halt.name,
-        detail: ride.haltEstimateLabel(day, halt.point),
+        detail: ride.plan.haltEstimateLabel(day, halt.point),
       ));
     }
-    final end = ride.dayEnd(day, draft: true);
+    final end = ride.plan.dayEnd(day, draft: true);
     if (end != null) places.add(_PlanPlace(day: day, role: 'End', name: end.name));
   }
   return places;
@@ -873,7 +897,7 @@ class _PlanPlaceList extends StatelessWidget {
               ),
               child: InkWell(
                 borderRadius: BorderRadius.circular(14),
-                onTap: () => ride.openPlanDay(place.day),
+                onTap: () => ride.plan.openPlanDay(place.day),
                 child: Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                   child: Row(
@@ -933,7 +957,7 @@ Widget _planOverlayButton({
 }
 
 Widget _dayButtonLabel(RideController ride, int day) {
-  final date = ride.dateForDay(day, draft: true);
+  final date = ride.plan.dateForDay(day, draft: true);
   return Column(
     mainAxisSize: MainAxisSize.min,
     children: [
@@ -946,9 +970,9 @@ Widget _dayButtonLabel(RideController ride, int day) {
 Future<void> pickPlanDates(BuildContext context, RideController ride) async {
   final today = DateTime.now();
   final todayDate = DateTime(today.year, today.month, today.day);
-  final current = ride.draftStartDate ?? todayDate;
+  final current = ride.plan.draftStartDate ?? todayDate;
   final start = DateTime(current.year, current.month, current.day);
-  final end = start.add(Duration(days: ride.draftDays - 1));
+  final end = start.add(Duration(days: ride.plan.draftDays - 1));
   final first = start.isBefore(todayDate) ? start : todayDate;
   final lastCandidate = todayDate.add(const Duration(days: 366));
   final last = lastCandidate.isBefore(end) ? end : lastCandidate;
@@ -962,11 +986,11 @@ Future<void> pickPlanDates(BuildContext context, RideController ride) async {
     builder: (context, child) => PointerInterceptor(child: child ?? const SizedBox.shrink()),
   );
   if (picked == null) return;
-  ride.setPlanDates(picked.start, picked.end);
+  ride.plan.setPlanDates(picked.start, picked.end);
 }
 
 Future<void> pickDayClock(BuildContext context, RideController ride, int day, {required bool start}) async {
-  final current = start ? ride.dayStartMinute(day) : ride.dayEndMinute(day);
+  final current = start ? ride.plan.dayStartMinute(day) : ride.plan.dayEndMinute(day);
   final initial = current == null
       ? const TimeOfDay(hour: 6, minute: 0)
       : TimeOfDay(hour: current ~/ 60, minute: current % 60);
@@ -979,9 +1003,9 @@ Future<void> pickDayClock(BuildContext context, RideController ride, int day, {r
   if (picked == null) return;
   final minute = picked.hour * 60 + picked.minute;
   if (start) {
-    ride.setDayClock(day, startMinute: minute);
+    ride.plan.setDayClock(day, startMinute: minute);
   } else {
-    ride.setDayClock(day, endMinute: minute);
+    ride.plan.setDayClock(day, endMinute: minute);
   }
 }
 
@@ -1064,11 +1088,11 @@ class _BroadcastRowState extends State<_BroadcastRow> {
 
   Widget _broadcast(BuildContext context, String label, IconData icon, NoticeKind kind, Color color) {
     final ride = RideScope.of(context);
-    final active = ride.notice?.kind == kind || (kind == NoticeKind.fuel && ride.fuelOn);
+    final active = ride.radio.notice?.kind == kind || (kind == NoticeKind.fuel && ride.nav.fuelOn);
     return Padding(
       padding: const EdgeInsets.only(right: 8),
       child: OutlinedButton.icon(
-        onPressed: ride.ended ? null : () => ride.send(kind),
+        onPressed: ride.ended ? null : () => ride.radio.send(kind),
         style: OutlinedButton.styleFrom(
           backgroundColor: active ? const Color(0xFFF8FAFC) : Colors.white,
           foregroundColor: const Color(0xFF0F172A),
@@ -1087,7 +1111,13 @@ class PackPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ride = RideScope.of(context);
-    final you = ride.packRows.where((row) => row.you).firstOrNull;
+    if (!ride.onRide) {
+      return ListView(
+        padding: const EdgeInsets.all(10),
+        children: const [_RideCodeCard()],
+      );
+    }
+    final you = ride.pack.packRows.where((row) => row.you).firstOrNull;
     return ListView(
       padding: const EdgeInsets.all(10),
       children: [
@@ -1137,7 +1167,7 @@ class PackPage extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('Pack · ${ride.packRows.length} riders', style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
+              Text('Pack · ${ride.pack.packRows.length} riders', style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
               const SizedBox(height: 4),
               Text(
                 you == null ? 'You are not attached to this ride.' : '${you.name} is on this code as ${you.role}. Distance is from you.',
@@ -1146,7 +1176,7 @@ class PackPage extends StatelessWidget {
             ],
           ),
         ),
-        for (final row in ride.packRows) ...[
+        for (final row in ride.pack.packRows) ...[
           const SizedBox(height: 8),
           _RiderCard(row: row),
         ],
@@ -1189,7 +1219,7 @@ class _RiderCard extends StatelessWidget {
                   button: true,
                   label: 'Remove ${row.name}',
                   child: OutlinedButton(
-                    onPressed: () => ride.removeRider(row.id),
+                    onPressed: () => ride.pack.removeRider(row.id),
                     child: const Text('Remove'),
                   ),
                 ),
@@ -1212,7 +1242,7 @@ class _RiderCard extends StatelessWidget {
                 ? 'Offline. Last position is still listed.'
                 : row.you
                     ? (ride.ended ? 'Ride ended. GPS is off.' : ride.paused ? 'Paused.' : 'Position is live.')
-                    : ride.showOthers
+                    : ride.pack.showOthers
                         ? 'Shown on the Ride HUD route.'
                         : 'Hidden on the map.',
             style: const TextStyle(color: Color(0xFF64748B)),
@@ -1238,7 +1268,7 @@ class TollPage extends StatelessWidget {
             children: [
               const Text('Khed-Shivapur Toll Naka', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
               const SizedBox(height: 6),
-              Text('${ride.arrived}/2 riders arrived', style: const TextStyle(color: Color(0xFFB45309), fontWeight: FontWeight.w700)),
+              Text('${ride.radio.arrived}/2 riders arrived', style: const TextStyle(color: Color(0xFFB45309), fontWeight: FontWeight.w700)),
               const SizedBox(height: 6),
               const Text('Send Regroup from the Ride HUD as riders roll in.', style: TextStyle(color: Color(0xFF64748B))),
             ],
@@ -1249,14 +1279,14 @@ class TollPage extends StatelessWidget {
   }
 }
 
-class ToursPage extends StatefulWidget {
-  const ToursPage({super.key});
+class _RideCodeCard extends StatefulWidget {
+  const _RideCodeCard();
 
   @override
-  State<ToursPage> createState() => _ToursPageState();
+  State<_RideCodeCard> createState() => _RideCodeCardState();
 }
 
-class _ToursPageState extends State<ToursPage> {
+class _RideCodeCardState extends State<_RideCodeCard> {
   final TextEditingController _join = TextEditingController();
   final FocusNode _joinFocus = FocusNode();
 
@@ -1277,104 +1307,117 @@ class _ToursPageState extends State<ToursPage> {
   @override
   Widget build(BuildContext context) {
     final ride = RideScope.of(context);
-    final start = ride.startName.isEmpty ? 'Start not set' : ride.startName;
-    final finish = ride.finishName.isEmpty ? 'Finish not set' : ride.finishName;
+    final start = ride.plan.startName.isEmpty ? 'Start not set' : ride.plan.startName;
+    final finish = ride.plan.finishName.isEmpty ? 'Finish not set' : ride.plan.finishName;
+    return _card(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(ride.onRide ? 'This ride' : 'Start a ride', style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
+          const SizedBox(height: 4),
+          Text(
+            ride.onRide ? ride.code : 'Generate a code, or join one you already have.',
+            style: TextStyle(fontSize: ride.onRide ? 22 : 14, fontWeight: FontWeight.w800, color: ride.onRide ? const Color(0xFF0F172A) : const Color(0xFF64748B)),
+          ),
+          if (ride.onRide) ...[
+            const SizedBox(height: 4),
+            Text(
+              ride.plan.tripDateLabel.isEmpty
+                  ? '$start → $finish · ${ride.plan.tripDays} ${ride.plan.tripDays == 1 ? 'day' : 'days'}'
+                  : '$start → $finish · ${ride.plan.tripDateLabel}',
+              style: const TextStyle(color: Color(0xFF334155)),
+            ),
+          ],
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              FilledButton(onPressed: ride.generateCode, child: Text(ride.onRide ? 'New code' : 'Generate a code')),
+              if (ride.onRide) OutlinedButton(onPressed: ride.leaveRide, child: const Text('Leave ride')),
+              if (ride.admin) OutlinedButton(onPressed: () => confirmDeleteRide(context, ride), child: const Text('Delete ride')),
+              if (ride.canPlan)
+                FilledButton(
+                  onPressed: ride.plan.beginPlanning,
+                  child: const Text('Plan a ride'),
+                ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          TextField(
+            controller: _join,
+            focusNode: _joinFocus,
+            keyboardType: TextInputType.text,
+            textCapitalization: TextCapitalization.characters,
+            textInputAction: TextInputAction.done,
+            autocorrect: false,
+            enableSuggestions: false,
+            style: const TextStyle(fontSize: 16),
+            decoration: const InputDecoration(
+              isDense: true,
+              hintText: 'Join a code, ZEN-1234',
+              border: OutlineInputBorder(),
+            ),
+            onTap: () => _joinFocus.requestFocus(),
+            onSubmitted: _submitCode,
+          ),
+          const SizedBox(height: 6),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: OutlinedButton(onPressed: () => _submitCode(_join.text), child: const Text('Join')),
+          ),
+          if (ride.joinNote.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(
+                ride.joinNote,
+                style: TextStyle(
+                  color: ride.joinNote.startsWith('Joining ') ? const Color(0xFF334155) : const Color(0xFF9A3412),
+                  fontSize: 15,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+          if (ride.onRide) ...[
+            const SizedBox(height: 12),
+            Text('On ${ride.code}', style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
+            const SizedBox(height: 2),
+            Text(
+              '${ride.pack.joinedPhones.length} ${ride.pack.joinedPhones.length == 1 ? 'phone' : 'phones'} on this ride',
+              style: const TextStyle(color: Color(0xFF64748B), fontSize: 13),
+            ),
+            for (final phone in ride.pack.joinedPhones)
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Text(
+                  phone.you ? '${phone.label} · this phone' : phone.label,
+                  style: TextStyle(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 16,
+                    color: phone.you ? const Color(0xFF1A73E8) : const Color(0xFF0F172A),
+                  ),
+                ),
+              ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class ToursPage extends StatelessWidget {
+  const ToursPage({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final ride = RideScope.of(context);
+    final savedRoad = ride.plan.roadFor(ride.plan.ridingDay);
+    final start = ride.plan.startName.isEmpty ? 'Start not set' : ride.plan.startName;
+    final finish = ride.plan.finishName.isEmpty ? 'Finish not set' : ride.plan.finishName;
     return ListView(
       padding: const EdgeInsets.all(10),
       children: [
-        _card(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(ride.onRide ? 'This ride' : 'Start a ride', style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
-              const SizedBox(height: 4),
-              Text(
-                ride.onRide ? ride.code : 'Generate a code, or join one you already have.',
-                style: TextStyle(fontSize: ride.onRide ? 22 : 14, fontWeight: FontWeight.w800, color: ride.onRide ? const Color(0xFF0F172A) : const Color(0xFF64748B)),
-              ),
-              if (ride.onRide) ...[
-                const SizedBox(height: 4),
-                Text(
-                  ride.tripDateLabel.isEmpty
-                      ? '$start → $finish · ${ride.tripDays} ${ride.tripDays == 1 ? 'day' : 'days'}'
-                      : '$start → $finish · ${ride.tripDateLabel}',
-                  style: const TextStyle(color: Color(0xFF334155)),
-                ),
-              ],
-              const SizedBox(height: 8),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  FilledButton(onPressed: ride.generateCode, child: Text(ride.onRide ? 'New code' : 'Generate a code')),
-                  if (ride.onRide) OutlinedButton(onPressed: ride.leaveRide, child: const Text('Leave ride')),
-                  if (ride.admin) OutlinedButton(onPressed: () => confirmDeleteRide(context, ride), child: const Text('Delete ride')),
-                  if (ride.canPlan)
-                    FilledButton(
-                      onPressed: ride.beginPlanning,
-                      child: const Text('Plan a ride'),
-                    ),
-                ],
-              ),
-              const SizedBox(height: 10),
-              TextField(
-                controller: _join,
-                focusNode: _joinFocus,
-                keyboardType: TextInputType.text,
-                textCapitalization: TextCapitalization.characters,
-                textInputAction: TextInputAction.done,
-                autocorrect: false,
-                enableSuggestions: false,
-                style: const TextStyle(fontSize: 16),
-                decoration: const InputDecoration(
-                  isDense: true,
-                  hintText: 'Join a code, ZEN-1234',
-                  border: OutlineInputBorder(),
-                ),
-                onTap: () => _joinFocus.requestFocus(),
-                onSubmitted: _submitCode,
-              ),
-              const SizedBox(height: 6),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: OutlinedButton(onPressed: () => _submitCode(_join.text), child: const Text('Join')),
-              ),
-              if (ride.joinNote.isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.only(top: 8),
-                  child: Text(
-                    ride.joinNote,
-                    style: TextStyle(
-                      color: ride.joinNote.startsWith('Joining ') ? const Color(0xFF334155) : const Color(0xFF9A3412),
-                      fontSize: 15,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                ),
-              if (ride.onRide) ...[
-                const SizedBox(height: 12),
-                Text('On ${ride.code}', style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
-                const SizedBox(height: 2),
-                Text(
-                  '${ride.joinedPhones.length} ${ride.joinedPhones.length == 1 ? 'phone' : 'phones'} on this ride',
-                  style: const TextStyle(color: Color(0xFF64748B), fontSize: 13),
-                ),
-                for (final phone in ride.joinedPhones)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 6),
-                    child: Text(
-                      phone.you ? '${phone.label} · this phone' : phone.label,
-                      style: TextStyle(
-                        fontWeight: FontWeight.w800,
-                        fontSize: 16,
-                        color: phone.you ? const Color(0xFF1A73E8) : const Color(0xFF0F172A),
-                      ),
-                    ),
-                  ),
-              ],
-            ],
-          ),
-        ),
+        const _RideCodeCard(),
         const SizedBox(height: 8),
         _card(
           child: Column(
@@ -1385,41 +1428,41 @@ class _ToursPageState extends State<ToursPage> {
                   const Expanded(child: Text('Your plan', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16))),
                   if (ride.canPlan)
                     OutlinedButton(
-                      onPressed: ride.beginPlanning,
-                      child: Text(ride.halts.isEmpty && ride.startPoint == null ? 'Plan a ride' : 'Edit'),
+                      onPressed: ride.plan.beginPlanning,
+                      child: Text(ride.plan.halts.isEmpty && ride.plan.startPoint == null ? 'Plan a ride' : 'Edit'),
                     ),
                 ],
               ),
               const SizedBox(height: 4),
               Text(
-                ride.halts.isEmpty && ride.startPoint == null && ride.finishPoint == null
+                ride.plan.halts.isEmpty && ride.plan.startPoint == null && ride.plan.finishPoint == null
                     ? 'Nothing saved yet. A long ride can be more than one day. Give each day an end point and the stops in between.'
                     : '$start to $finish.',
                 style: const TextStyle(color: Color(0xFF64748B)),
               ),
-              if (ride.chosen != null) ...[
+              if (savedRoad != null) ...[
                 const SizedBox(height: 4),
                 Text(
-                  '${ride.chosen!.duration} · ${ride.chosen!.distance} · ${ride.chosen!.summary}',
+                  '${savedRoad.duration} · ${savedRoad.distance} · ${savedRoad.summary}',
                   style: const TextStyle(fontWeight: FontWeight.w800),
                 ),
               ],
-              if (ride.shareNote.isNotEmpty) ...[
+              if (ride.plan.shareNote.isNotEmpty) ...[
                 const SizedBox(height: 4),
-                Text(ride.shareNote, style: const TextStyle(color: Color(0xFF9A3412), fontWeight: FontWeight.w800)),
+                Text(ride.plan.shareNote, style: const TextStyle(color: Color(0xFF9A3412), fontWeight: FontWeight.w800)),
               ],
-              for (var day = 1; day <= ride.tripDays; day++) ...[
+              for (var day = 1; day <= ride.plan.tripDays; day++) ...[
                 const SizedBox(height: 8),
                 Text(
-                  ride.dateForDay(day) == null ? 'Day $day' : 'Day $day · ${formatPlanDate(ride.dateForDay(day)!)}',
+                  ride.plan.dateForDay(day) == null ? 'Day $day' : 'Day $day · ${formatPlanDate(ride.plan.dateForDay(day)!)}',
                   style: const TextStyle(fontWeight: FontWeight.w800),
                 ),
                 Text(
-                  'End · ${ride.dayEnd(day)?.name ?? 'Not set'}',
+                  'End · ${ride.plan.dayEnd(day)?.name ?? 'Not set'}',
                   style: const TextStyle(color: Color(0xFF334155)),
                 ),
                 Text(
-                  ride.dayStops(day).isEmpty ? 'No stops in between' : 'Stops · ${ride.dayStops(day).map((stop) => stop.name).join(', ')}',
+                  ride.plan.dayStops(day).isEmpty ? 'No stops in between' : 'Stops · ${ride.plan.dayStops(day).map((stop) => stop.name).join(', ')}',
                   style: const TextStyle(color: Color(0xFF64748B), fontSize: 13),
                 ),
               ],
@@ -1447,7 +1490,7 @@ class RideNav extends StatelessWidget {
           child: Row(
             children: [
               _tab(context, RideTab.hud, 'Ride HUD', Icons.map),
-              _tab(context, RideTab.pack, 'Pack (${ride.packRows.length})', Icons.group),
+              _tab(context, RideTab.pack, 'Pack (${ride.pack.packRows.length})', Icons.group),
               _tab(context, RideTab.toll, 'Toll Naka', Icons.toll),
               _tab(context, RideTab.tours, 'Tours', Icons.route),
               IconButton(

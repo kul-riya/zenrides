@@ -9,10 +9,10 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart' as gmaps;
 import 'package:latlong2/latlong.dart';
 
-import 'maps_bridge.dart';
+import '../navigation/maps_bridge.dart';
 import 'ride_controller.dart';
 import 'ride_repository.dart' show SosFix;
-import 'trip_plan.dart';
+import '../planning/trip_plan.dart';
 
 class RideMap extends StatefulWidget {
   const RideMap({super.key, required this.ride});
@@ -43,11 +43,15 @@ class _RideMapState extends State<RideMap> {
 
   RideController get ride => widget.ride;
 
+  /// Web waits for the JavaScript map. The phone uses the Android Maps SDK
+  /// when the build has a Maps key, and the OpenStreetMap tiles otherwise.
+  bool get _googleTiles => kIsWeb ? MapsBridge.scriptReady : MapsBridge.available;
+
   @override
   void initState() {
     super.initState();
     ride.addListener(_onRide);
-    if (kIsWeb) {
+    if (kIsWeb || MapsBridge.available) {
       _loadRiderIcons();
       _loadFuelIcon();
       _loadTollIcon();
@@ -75,42 +79,43 @@ class _RideMapState extends State<RideMap> {
 
   void _onRide() {
     if (!mounted) return;
-    if (ride.gpsLocked && !_gpsWasLocked && ride.navigating) _follow = true;
-    _gpsWasLocked = ride.gpsLocked;
-    if (ride.pumpFit != _seenPumps && ride.pumps.isNotEmpty && _fit(ride.pumps.map((pump) => pump.point).toList())) {
-      _seenPumps = ride.pumpFit;
+    if (ride.pack.gpsLocked && !_gpsWasLocked && ride.nav.navigating) _follow = true;
+    _gpsWasLocked = ride.pack.gpsLocked;
+    if (ride.nav.pumpFit != _seenPumps && ride.nav.pumps.isNotEmpty && _fit(ride.nav.pumps.map((pump) => pump.point).toList())) {
+      _seenPumps = ride.nav.pumpFit;
       _follow = false;
     }
     final focus = _focusPoints();
-    if (ride.routeFit != _seenRoute && focus.length >= 2) {
+    final routeFit = ride.plan.planning ? ride.plan.routeFit : ride.nav.routeFit;
+    if (routeFit != _seenRoute && focus.length >= 2) {
       if (_fit(focus)) {
-        _seenRoute = ride.routeFit;
+        _seenRoute = routeFit;
         _follow = false;
       }
     }
-    if (ride.navFit != _seenNav && ride.navigating) {
-      _seenNav = ride.navFit;
+    if (ride.nav.navFit != _seenNav && ride.nav.navigating) {
+      _seenNav = ride.nav.navFit;
       _follow = true;
     }
-    if (ride.planning && ride.planFit != _seenPlan && _ready) {
-      _seenPlan = ride.planFit;
+    if (ride.plan.planning && ride.plan.planFit != _seenPlan && _ready) {
+      _seenPlan = ride.plan.planFit;
       _follow = false;
       _showWidePlan();
     }
-    if (_ready && _follow && ride.navigating) {
-      _moveTo(ride.you, zoom: 17, bearing: ride.bearing, tilt: 50);
+    if (_ready && _follow && ride.nav.navigating) {
+      _moveTo(ride.you, zoom: 17, bearing: ride.nav.bearing, tilt: 50);
     }
-    if (kIsWeb) _ensureArrow(((_screenHeading() / 5).round() * 5) % 360);
+    if (kIsWeb || MapsBridge.available) _ensureArrow(((_screenHeading() / 5).round() * 5) % 360);
     setState(() {});
   }
 
   List<LatLng> _focusPoints() {
-    if (ride.planning) {
-      final planned = [for (final path in ride.planPaths) ...path.points];
+    if (ride.plan.planning) {
+      final planned = [for (final path in ride.plan.planPaths) ...path.points];
       if (planned.length >= 2) return planned;
     }
-    if (ride.showHudRoute) {
-      return ride.routes[ride.selectedRoute.clamp(0, ride.routes.length - 1)].points;
+    if (ride.nav.showHudRoute) {
+      return ride.nav.routes[ride.nav.selectedRoute.clamp(0, ride.nav.routes.length - 1)].points;
     }
     return const [];
   }
@@ -119,14 +124,14 @@ class _RideMapState extends State<RideMap> {
     final focus = _focusPoints();
     if (focus.length < 2) return;
     if (_fit(focus)) {
-      _seenRoute = ride.routeFit;
+      _seenRoute = ride.plan.planning ? ride.plan.routeFit : ride.nav.routeFit;
       _follow = false;
     }
   }
 
   bool _fit(List<LatLng> points) {
     if (points.length < 2) return false;
-    if (kIsWeb && _google == null) return false;
+    if (_googleTiles && _google == null) return false;
     final box = context.findRenderObject();
     if (box is! RenderBox || !box.hasSize || box.size.shortestSide < 80) return false;
     var south = points.first.latitude;
@@ -141,7 +146,7 @@ class _RideMapState extends State<RideMap> {
     }
     // A span this wide is a bad fit. It zooms out until the world is drawn more than once.
     if (north - south > 50 || east - west > 50) return false;
-    if (kIsWeb) {
+    if (_googleTiles) {
       _programmatic = true;
       _google?.moveCamera(
         gmaps.CameraUpdate.newLatLngBounds(
@@ -164,7 +169,7 @@ class _RideMapState extends State<RideMap> {
   }
 
   void _showWidePlan() {
-    final points = [ride.you, ...ride.visibleHalts.map((halt) => halt.point)];
+    final points = [ride.you, ...ride.plan.visibleHalts.map((halt) => halt.point)];
     if (points.isEmpty) return;
     var south = points.first.latitude;
     var north = south;
@@ -188,7 +193,7 @@ class _RideMapState extends State<RideMap> {
       east += extra;
     }
     _follow = false;
-    if (kIsWeb) {
+    if (_googleTiles) {
       if (_google == null) return;
       _programmatic = true;
       _google?.moveCamera(
@@ -212,8 +217,8 @@ class _RideMapState extends State<RideMap> {
 
   void _recenter() {
     _follow = true;
-    if (ride.navigating) {
-      _moveTo(ride.you, zoom: 17, bearing: ride.bearing, tilt: 50);
+    if (ride.nav.navigating) {
+      _moveTo(ride.you, zoom: 17, bearing: ride.nav.bearing, tilt: 50);
     } else {
       _moveTo(ride.you, zoom: RideController.recenterZoom);
     }
@@ -222,7 +227,7 @@ class _RideMapState extends State<RideMap> {
 
   void _moveTo(LatLng point, {double? zoom, double bearing = 0, double tilt = 0}) {
     _cameraBearing = bearing;
-    if (kIsWeb) {
+    if (_googleTiles) {
       _programmatic = true;
       final target = gmaps.LatLng(point.latitude, point.longitude);
       final camera = zoom == null
@@ -284,7 +289,7 @@ class _RideMapState extends State<RideMap> {
   }
 
   double _screenHeading() {
-    final delta = ride.travelHeading - _cameraBearing;
+    final delta = ride.nav.travelHeading - _cameraBearing;
     return (delta % 360 + 360) % 360;
   }
 
@@ -313,7 +318,7 @@ class _RideMapState extends State<RideMap> {
 
   Set<gmaps.Marker> _googleMarkers(SosFix? sos) {
     final markers = <gmaps.Marker>{};
-    for (final halt in ride.mapHalts) {
+    for (final halt in ride.plan.mapHalts) {
       markers.add(gmaps.Marker(
         markerId: gmaps.MarkerId(halt.id),
         position: _g(halt.point),
@@ -321,7 +326,7 @@ class _RideMapState extends State<RideMap> {
         icon: gmaps.BitmapDescriptor.defaultMarkerWithHue(gmaps.BitmapDescriptor.hueOrange),
       ));
     }
-    for (final pump in ride.shownPumps) {
+    for (final pump in ride.plan.shownPumps) {
       markers.add(gmaps.Marker(
         markerId: gmaps.MarkerId(pump.id),
         position: _g(pump.point),
@@ -329,35 +334,35 @@ class _RideMapState extends State<RideMap> {
         icon: _fuelIcon ?? gmaps.BitmapDescriptor.defaultMarkerWithHue(gmaps.BitmapDescriptor.hueRose),
       ));
     }
-    if (ride.planning) {
-      for (final toll in ride.planTolls) {
+    if (ride.plan.planning) {
+      for (final toll in ride.plan.planTolls) {
         markers.add(gmaps.Marker(
           markerId: gmaps.MarkerId('toll-${toll.id}'),
           position: _g(toll.point),
           infoWindow: gmaps.InfoWindow(title: toll.name),
-          onTap: () => ride.pickToll(toll),
+          onTap: () => ride.plan.pickToll(toll),
           icon: _tollIcon ?? gmaps.BitmapDescriptor.defaultMarkerWithHue(gmaps.BitmapDescriptor.hueOrange),
         ));
       }
     }
-    if (ride.showHudRoute) {
-      final chosen = ride.routes[ride.selectedRoute.clamp(0, ride.routes.length - 1)];
+    if (ride.nav.showHudRoute) {
+      final chosen = ride.nav.routes[ride.nav.selectedRoute.clamp(0, ride.nav.routes.length - 1)];
       final end = chosen.points.last;
-      final covered = ride.visibleHalts.any((halt) => const Distance().as(LengthUnit.Meter, halt.point, end) < 400);
+      final covered = ride.plan.visibleHalts.any((halt) => const Distance().as(LengthUnit.Meter, halt.point, end) < 400);
       if (!covered) {
         markers.add(gmaps.Marker(
           markerId: const gmaps.MarkerId('destination'),
           position: _g(end),
-          infoWindow: gmaps.InfoWindow(title: ride.destinationName),
+          infoWindow: gmaps.InfoWindow(title: ride.nav.destinationName),
           icon: gmaps.BitmapDescriptor.defaultMarkerWithHue(gmaps.BitmapDescriptor.hueViolet),
         ));
       }
     }
-    for (final rider in ride.mapRiders) {
+    for (final rider in ride.pack.mapRiders) {
       if (rider.you) {
         // The parked stand-in is not a real fix. Drawing it on open put an arrow
         // on the map before anyone had a location.
-        if (ride.gpsFix == null) continue;
+        if (ride.pack.gpsFix == null) continue;
         final deg = ((_screenHeading() / 5).round() * 5) % 360;
         final arrow = _arrows[deg] ?? _arrows[0];
         // A missing arrow used to fall back to Google's red pin, which showed up
@@ -393,8 +398,8 @@ class _RideMapState extends State<RideMap> {
   }
 
   Set<gmaps.Polyline> _googleLines() {
-    if (ride.showHudRoute) {
-      final chosen = ride.routes[ride.selectedRoute.clamp(0, ride.routes.length - 1)];
+    if (ride.nav.showHudRoute) {
+      final chosen = ride.nav.routes[ride.nav.selectedRoute.clamp(0, ride.nav.routes.length - 1)];
       return {
         gmaps.Polyline(
           polylineId: const gmaps.PolylineId('drive-live'),
@@ -404,17 +409,17 @@ class _RideMapState extends State<RideMap> {
         ),
       };
     }
-    if (ride.planning && ride.planPaths.isNotEmpty) {
-      final paths = ride.planPaths;
+    if (ride.plan.planning && ride.plan.planPaths.isNotEmpty) {
+      final paths = ride.plan.planPaths;
       return {
         for (final path in paths)
           gmaps.Polyline(
             polylineId: gmaps.PolylineId('day-${path.day}-${path.alternative ?? 'saved'}'),
             color: path.selected ? dayColor(path.day) : dayColor(path.day).withValues(alpha: 0.35),
-            width: path.selected ? (path.day == ride.planDay ? 6 : 5) : 4,
-            zIndex: path.selected ? (path.day == ride.planDay ? 3 : 1) : 0,
+            width: path.selected ? (path.day == ride.plan.planDay ? 6 : 5) : 4,
+            zIndex: path.selected ? (path.day == ride.plan.planDay ? 3 : 1) : 0,
             consumeTapEvents: true,
-            onTap: () => ride.openPlannedDay(path.day, alternative: path.alternative),
+            onTap: () => ride.plan.openPlannedDay(path.day, alternative: path.alternative),
             points: [for (final point in path.points) _g(point)],
           ),
       };
@@ -423,14 +428,14 @@ class _RideMapState extends State<RideMap> {
   }
 
   List<Polyline> _mapLines() {
-    if (ride.showHudRoute) {
-      final chosen = ride.routes[ride.selectedRoute.clamp(0, ride.routes.length - 1)];
+    if (ride.nav.showHudRoute) {
+      final chosen = ride.nav.routes[ride.nav.selectedRoute.clamp(0, ride.nav.routes.length - 1)];
       return [Polyline(points: chosen.points, color: const Color(0xFF1D4ED8), strokeWidth: 5)];
     }
-    if (ride.planning && ride.planPaths.isNotEmpty) {
-      final paths = [...ride.planPaths]..sort((a, b) {
-          final aRank = a.selected ? (a.day == ride.planDay ? 2 : 1) : 0;
-          final bRank = b.selected ? (b.day == ride.planDay ? 2 : 1) : 0;
+    if (ride.plan.planning && ride.plan.planPaths.isNotEmpty) {
+      final paths = [...ride.plan.planPaths]..sort((a, b) {
+          final aRank = a.selected ? (a.day == ride.plan.planDay ? 2 : 1) : 0;
+          final bRank = b.selected ? (b.day == ride.plan.planDay ? 2 : 1) : 0;
           return aRank.compareTo(bRank);
         });
       return [
@@ -438,7 +443,7 @@ class _RideMapState extends State<RideMap> {
           Polyline(
             points: path.points,
             color: path.selected ? dayColor(path.day) : dayColor(path.day).withValues(alpha: 0.35),
-            strokeWidth: path.selected ? (path.day == ride.planDay ? 5 : 4) : 3,
+            strokeWidth: path.selected ? (path.day == ride.plan.planDay ? 5 : 4) : 3,
           ),
       ];
     }
@@ -478,10 +483,10 @@ class _RideMapState extends State<RideMap> {
 
   @override
   Widget build(BuildContext context) {
-    final sos = ride.visibleSos;
+    final sos = ride.radio.visibleSos;
     return Stack(
       children: [
-        if (kIsWeb && MapsBridge.scriptReady)
+        if (_googleTiles)
           _googleMap(sos)
         else
         FlutterMap(
@@ -507,19 +512,19 @@ class _RideMapState extends State<RideMap> {
             PolylineLayer(polylines: _mapLines()),
             MarkerLayer(
               markers: [
-                for (final halt in ride.mapHalts)
+                for (final halt in ride.plan.mapHalts)
                   _pin(halt.point, _label(halt.name, const Color(0xFFB45309))),
-                for (final pump in ride.shownPumps) _spot(pump.point, const Color(0xFFE11D2E), Icons.local_gas_station, pump.name),
-                if (ride.planning)
-                  for (final toll in ride.planTolls)
+                for (final pump in ride.plan.shownPumps) _spot(pump.point, const Color(0xFFE11D2E), Icons.local_gas_station, pump.name),
+                if (ride.plan.planning)
+                  for (final toll in ride.plan.planTolls)
                     _spot(
                       toll.point,
                       const Color(0xFFB45309),
                       Icons.toll,
                       toll.name,
-                      onTap: () => ride.pickToll(toll),
+                      onTap: () => ride.plan.pickToll(toll),
                     ),
-                for (final rider in ride.mapRiders)
+                for (final rider in ride.pack.mapRiders)
                   if (!rider.you)
                     _pin(
                       rider.point,
@@ -530,14 +535,14 @@ class _RideMapState extends State<RideMap> {
                     LatLng(sos.lat, sos.lng),
                     _label('SOS', const Color(0xFFC81E1E)),
                   ),
-                if (ride.gpsFix != null)
+                if (ride.pack.gpsFix != null)
                   Marker(
                     point: ride.you,
                     width: 40,
                     height: 40,
                     alignment: Alignment.center,
                     child: Transform.rotate(
-                      angle: ride.travelHeading * pi / 180,
+                      angle: ride.nav.travelHeading * pi / 180,
                       child: CustomPaint(
                         size: const Size(40, 40),
                         painter: const _NavArrowPainter(),
@@ -553,7 +558,7 @@ class _RideMapState extends State<RideMap> {
             ),
           ],
         ),
-        if (ride.planning && ride.planScreen == PlanScreen.map)
+        if (ride.plan.planning && ride.plan.planScreen == PlanScreen.map)
           Positioned(
             left: 8,
             top: 8,
@@ -564,40 +569,40 @@ class _RideMapState extends State<RideMap> {
                 shape: const CircleBorder(),
                 child: IconButton(
                   tooltip: 'Back',
-                  onPressed: ride.closeMapPick,
+                  onPressed: ride.plan.closeMapPick,
                   icon: const Icon(Icons.arrow_back),
                 ),
               ),
             ),
           ),
-        if (ride.planning && ride.planScreen != PlanScreen.day)
+        if (ride.plan.planning && ride.plan.planScreen != PlanScreen.day)
           Positioned(
-            left: ride.planScreen == PlanScreen.map ? 64 : 8,
-            right: ride.planScreen == PlanScreen.map ? 8 : 108,
+            left: ride.plan.planScreen == PlanScreen.map ? 64 : 8,
+            right: ride.plan.planScreen == PlanScreen.map ? 8 : 108,
             top: 8,
             child: PointerInterceptor(child: _PlanSearch(ride: ride)),
           )
-        else if (!ride.planning && ride.navigating)
+        else if (!ride.plan.planning && ride.nav.navigating)
           Positioned(
             left: 8,
             right: 108,
             top: 8,
             child: _NavBanner(ride: ride),
           )
-        else if (!ride.planning)
+        else if (!ride.plan.planning)
           Positioned(
             left: 8,
             right: 108,
             top: 8,
             child: PointerInterceptor(child: _DirectionsSearch(ride: ride)),
           ),
-        if (ride.planning && ride.planScreen == PlanScreen.overview)
+        if (ride.plan.planning && ride.plan.planScreen == PlanScreen.overview)
           Positioned(
             right: 8,
             top: 8,
             child: PointerInterceptor(child: _dayBadge(ride)),
           ),
-        if (!ride.planning && !ride.navigating && !ride.searchFocused && ride.suggestions.isEmpty)
+        if (!ride.plan.planning && !ride.nav.navigating && !ride.nav.searchFocused && ride.nav.suggestions.isEmpty)
         Positioned(
           left: 8,
           top: 64,
@@ -606,55 +611,55 @@ class _RideMapState extends State<RideMap> {
             runSpacing: 6,
             children: [
               _chip(
-                ride.showOthers ? 'Hide Other Bikes' : 'Show Other Bikes',
-                ride.toggleOthers,
-                icon: ride.showOthers ? Icons.visibility_off : Icons.visibility,
+                ride.pack.showOthers ? 'Hide Other Bikes' : 'Show Other Bikes',
+                ride.pack.toggleOthers,
+                icon: ride.pack.showOthers ? Icons.visibility_off : Icons.visibility,
               ),
               _chip(
-                ride.gpsSeeking ? 'GPS…' : (ride.gpsLocked ? 'GPS live' : 'GPS off'),
-                ride.requestGps,
+                ride.pack.gpsSeeking ? 'GPS…' : (ride.pack.gpsLocked ? 'GPS live' : 'GPS off'),
+                ride.pack.requestGps,
               ),
             ],
           ),
         ),
-        if (!ride.planning && !ride.gpsLocked && !ride.ended)
+        if (!ride.plan.planning && !ride.pack.gpsLocked && !ride.ended)
           Positioned(
             left: 8,
-            top: ride.navigating ? 64 : (ride.gpsReason.isEmpty ? 108 : 148),
+            top: ride.nav.navigating ? 64 : (ride.pack.gpsReason.isEmpty ? 108 : 148),
             child: PointerInterceptor(child: _note('Tap the map to set where you are')),
           ),
-        if (!ride.planning && ride.gpsReason.isNotEmpty)
+        if (!ride.plan.planning && ride.pack.gpsReason.isNotEmpty)
           Positioned(
             left: 8,
             top: 108,
-            child: _note(ride.gpsReason),
+            child: _note(ride.pack.gpsReason),
           ),
-        if (!ride.planning && ride.navigating)
+        if (!ride.plan.planning && ride.nav.navigating)
           Positioned(
             left: 8,
             right: 8,
             bottom: 8,
             child: _NavFooter(ride: ride),
           )
-        else if (ride.planning && ride.routes.isNotEmpty && ride.roadFitsDay)
+        else if (ride.plan.planning && ride.plan.routes.isNotEmpty && ride.plan.roadFitsDay)
           Positioned(
             left: 8,
             right: 8,
             bottom: 8,
             child: PointerInterceptor(child: _RouteChoices(ride: ride)),
           )
-        else if (ride.showHudRoute)
+        else if (ride.nav.showHudRoute)
           Positioned(
             left: 8,
             right: 8,
             bottom: 8,
             child: PointerInterceptor(child: _RouteChoices(ride: ride)),
           )
-        else if (!ride.planning && ride.fuelNote.isNotEmpty)
+        else if (!ride.plan.planning && ride.nav.fuelNote.isNotEmpty)
           Positioned(
             left: 8,
             bottom: 36,
-            child: _note(ride.fuelNote),
+            child: _note(ride.nav.fuelNote),
           ),
         if (ride.ended)
           const Positioned(
@@ -668,17 +673,17 @@ class _RideMapState extends State<RideMap> {
               ),
             ),
           ),
-        if (ride.planning && ride.pickedToll != null && ride.planScreen != PlanScreen.day)
+        if (ride.plan.planning && ride.plan.pickedToll != null && ride.plan.planScreen != PlanScreen.day)
           Positioned(
             left: 12,
             right: 12,
             bottom: 16,
-            child: PointerInterceptor(child: _TollHaltCard(ride: ride, toll: ride.pickedToll!)),
+            child: PointerInterceptor(child: _TollHaltCard(ride: ride, toll: ride.plan.pickedToll!)),
           ),
-        if (!ride.planning)
+        if (!ride.plan.planning)
         Positioned(
           right: 12,
-          bottom: ride.navigating ? 58 : (ride.showHudRoute || (ride.planning && ride.routes.isNotEmpty && ride.roadFitsDay) ? 156 : 16),
+          bottom: ride.nav.navigating ? 58 : (ride.nav.showHudRoute || (ride.plan.planning && ride.plan.routes.isNotEmpty && ride.plan.roadFitsDay) ? 156 : 16),
           child: Semantics(
             button: true,
             label: 'Recenter',
@@ -775,8 +780,8 @@ class _RideMapState extends State<RideMap> {
   }
 
   Widget _dayBadge(RideController ride) {
-    final day = ride.planning ? ride.planDay : ride.ridingDay;
-    final total = ride.planning ? ride.draftDays : ride.tripDays;
+    final day = ride.plan.planning ? ride.plan.planDay : ride.plan.ridingDay;
+    final total = ride.plan.planning ? ride.plan.draftDays : ride.plan.tripDays;
     final label = total > 1 ? 'Day $day of $total' : 'Day $day';
     return Material(
       color: Colors.white,
@@ -811,20 +816,20 @@ class _RideMapState extends State<RideMap> {
   }
 
   void _onMapTap(LatLng point) {
-    if (ride.planning && ride.planScreen == PlanScreen.map && ride.picking) {
-      ride.dropHalt(point);
+    if (ride.plan.planning && ride.plan.planScreen == PlanScreen.map && ride.plan.picking) {
+      ride.plan.dropHalt(point);
       return;
     }
-    if (ride.planning) ride.showWholeRide();
-    if (ride.picking) {
-      ride.dropHalt(point);
+    if (ride.plan.planning) ride.plan.showWholeRide();
+    if (ride.plan.picking) {
+      ride.plan.dropHalt(point);
       return;
     }
-    if (!ride.gpsLocked && !ride.planning) unawaited(_offerPin(point));
+    if (!ride.pack.gpsLocked && !ride.plan.planning) unawaited(_offerPin(point));
   }
 
   Future<void> _offerPin(LatLng point) async {
-    if (_askingPin || !mounted || ride.gpsLocked || ride.planning || ride.ended) return;
+    if (_askingPin || !mounted || ride.pack.gpsLocked || ride.plan.planning || ride.ended) return;
     _askingPin = true;
     final when = TimeOfDay.now().format(context);
     final ok = await showDialog<bool>(
@@ -841,7 +846,7 @@ class _RideMapState extends State<RideMap> {
       ),
     );
     _askingPin = false;
-    if (ok == true && mounted) ride.placeYou(point);
+    if (ok == true && mounted) ride.pack.placeYou(point);
   }
 
   Widget _note(String text) {
@@ -882,7 +887,7 @@ class _DirectionsSearchState extends State<_DirectionsSearch> {
   }
 
   void _onFocus() {
-    ride.setSearchFocused(_focus.hasFocus);
+    ride.nav.setSearchFocused(_focus.hasFocus);
   }
 
   @override
@@ -898,7 +903,7 @@ class _DirectionsSearchState extends State<_DirectionsSearch> {
   void dispose() {
     ride.removeListener(_sync);
     _focus.removeListener(_onFocus);
-    ride.setSearchFocused(false);
+    ride.nav.setSearchFocused(false);
     _focus.dispose();
     _text.dispose();
     super.dispose();
@@ -906,7 +911,7 @@ class _DirectionsSearchState extends State<_DirectionsSearch> {
 
   void _sync() {
     if (!mounted) return;
-    final sig = '${ride.destinationName}|${ride.searchNote}|${ride.suggestions.map((hit) => hit.placeId).join()}';
+    final sig = '${ride.nav.destinationName}|${ride.nav.searchNote}|${ride.nav.suggestions.map((hit) => hit.placeId).join()}';
     if (sig == _sig) return;
     _sig = sig;
     setState(() {});
@@ -937,7 +942,7 @@ class _DirectionsSearchState extends State<_DirectionsSearch> {
                       tooltip: 'Clear',
                       onPressed: () {
                         _text.clear();
-                        ride.clearDirections();
+                        ride.nav.clearDirections();
                         setState(() {});
                       },
                       icon: const Icon(Icons.close, size: 18),
@@ -947,11 +952,11 @@ class _DirectionsSearchState extends State<_DirectionsSearch> {
             ),
             onChanged: (value) {
               setState(() {});
-              ride.lookUp(value);
+              ride.nav.lookUp(value);
             },
           ),
         ),
-        if (ride.searchNote.isNotEmpty)
+        if (ride.nav.searchNote.isNotEmpty)
           Padding(
             padding: const EdgeInsets.only(top: 6),
             child: Material(
@@ -959,11 +964,11 @@ class _DirectionsSearchState extends State<_DirectionsSearch> {
               borderRadius: BorderRadius.circular(12),
               child: Padding(
                 padding: const EdgeInsets.all(10),
-                child: Text(ride.searchNote, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12)),
+                child: Text(ride.nav.searchNote, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12)),
               ),
             ),
           ),
-        if (ride.suggestions.isNotEmpty)
+        if (ride.nav.suggestions.isNotEmpty)
           Padding(
             padding: const EdgeInsets.only(top: 6),
             child: Material(
@@ -972,7 +977,7 @@ class _DirectionsSearchState extends State<_DirectionsSearch> {
               borderRadius: BorderRadius.circular(16),
               child: Column(
                 children: [
-                  for (final hit in ride.suggestions)
+                  for (final hit in ride.nav.suggestions)
                     ListTile(
                       dense: true,
                       leading: const Icon(Icons.place_outlined, size: 18),
@@ -981,7 +986,7 @@ class _DirectionsSearchState extends State<_DirectionsSearch> {
                       onTap: () {
                         _text.text = hit.name;
                         _sig = '';
-                        ride.choosePlace(hit);
+                        ride.nav.choosePlace(hit);
                         FocusScope.of(context).unfocus();
                       },
                     ),
@@ -1033,7 +1038,7 @@ class _PlanSearchState extends State<_PlanSearch> {
 
   void _sync() {
     if (!mounted) return;
-    final sig = '${ride.planSlot}|${ride.planDay}|${ride.visiblePlanNote}|${ride.wholeRide}|${ride.planHits.map((hit) => hit.placeId).join()}';
+    final sig = '${ride.plan.planSlot}|${ride.plan.planDay}|${ride.plan.visiblePlanNote}|${ride.plan.wholeRide}|${ride.plan.planHits.map((hit) => hit.placeId).join()}';
     if (sig == _sig) return;
     _sig = sig;
     setState(() {});
@@ -1041,12 +1046,12 @@ class _PlanSearchState extends State<_PlanSearch> {
 
   @override
   Widget build(BuildContext context) {
-    final hint = switch (ride.planSlot) {
+    final hint = switch (ride.plan.planSlot) {
       PlanSlot.start => 'Search the start',
-      PlanSlot.dayStart => 'Search day ${ride.planDay} start',
+      PlanSlot.dayStart => 'Search day ${ride.plan.planDay} start',
       PlanSlot.finish => 'Search the finish',
-      PlanSlot.dayEnd => 'Search day ${ride.planDay} end',
-      PlanSlot.stop => 'Search a day ${ride.planDay} stop',
+      PlanSlot.dayEnd => 'Search day ${ride.plan.planDay} end',
+      PlanSlot.stop => 'Search a day ${ride.plan.planDay} stop',
     };
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1070,7 +1075,7 @@ class _PlanSearchState extends State<_PlanSearch> {
                       tooltip: 'Clear',
                       onPressed: () {
                         _text.clear();
-                        ride.lookUpPlan('');
+                        ride.plan.lookUpPlan('');
                         setState(() {});
                       },
                       icon: const Icon(Icons.close, size: 18),
@@ -1080,11 +1085,11 @@ class _PlanSearchState extends State<_PlanSearch> {
             ),
             onChanged: (value) {
               setState(() {});
-              ride.lookUpPlan(value);
+              ride.plan.lookUpPlan(value);
             },
           ),
         ),
-        if (ride.visiblePlanNote.isNotEmpty)
+        if (ride.plan.visiblePlanNote.isNotEmpty)
           Padding(
             padding: const EdgeInsets.only(top: 6),
             child: Material(
@@ -1092,11 +1097,11 @@ class _PlanSearchState extends State<_PlanSearch> {
               borderRadius: BorderRadius.circular(12),
               child: Padding(
                 padding: const EdgeInsets.all(10),
-                child: Text(ride.visiblePlanNote, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12)),
+                child: Text(ride.plan.visiblePlanNote, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12)),
               ),
             ),
           ),
-        if (ride.planHits.isNotEmpty)
+        if (ride.plan.planHits.isNotEmpty)
           Padding(
             padding: const EdgeInsets.only(top: 6),
             child: Material(
@@ -1105,7 +1110,7 @@ class _PlanSearchState extends State<_PlanSearch> {
               borderRadius: BorderRadius.circular(16),
               child: Column(
                 children: [
-                  for (final hit in ride.planHits.take(4))
+                  for (final hit in ride.plan.planHits.take(4))
                     ListTile(
                       dense: true,
                       leading: const Icon(Icons.place_outlined, size: 18),
@@ -1114,7 +1119,7 @@ class _PlanSearchState extends State<_PlanSearch> {
                       onTap: () {
                         _text.text = hit.name;
                         _sig = '';
-                        ride.choosePlanPlace(hit);
+                        ride.plan.choosePlanPlace(hit);
                         FocusScope.of(context).unfocus();
                       },
                     ),
@@ -1171,8 +1176,10 @@ class _RouteChoices extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final index = ride.selectedRoute.clamp(0, ride.routes.length - 1);
-    final route = ride.routes[index];
+    final planning = ride.plan.planning;
+    final routes = planning ? ride.plan.routes : ride.nav.routes;
+    final index = (planning ? ride.plan.selectedRoute : ride.nav.selectedRoute).clamp(0, routes.length - 1);
+    final route = routes[index];
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -1180,16 +1187,16 @@ class _RouteChoices extends StatelessWidget {
           title: route.duration.isEmpty ? 'Route ${index + 1}' : route.duration,
           detail: '${route.distance} · ${route.summary}',
         ),
-        if (ride.routes.length > 1) ...[
+        if (routes.length > 1) ...[
           const SizedBox(height: 8),
           SizedBox(
             height: 36,
             child: ListView.separated(
               scrollDirection: Axis.horizontal,
-              itemCount: ride.routes.length,
+              itemCount: routes.length,
               separatorBuilder: (_, _) => const SizedBox(width: 8),
               itemBuilder: (context, other) {
-                final alt = ride.routes[other];
+                final alt = routes[other];
                 final selected = other == index;
                 final label = alt.duration.isEmpty ? 'Route ${other + 1}' : alt.duration;
                 return Material(
@@ -1197,7 +1204,7 @@ class _RouteChoices extends StatelessWidget {
                   borderRadius: BorderRadius.circular(16),
                   clipBehavior: Clip.antiAlias,
                   child: InkWell(
-                    onTap: () => ride.selectRoute(other),
+                    onTap: () => planning ? ride.plan.selectRoute(other) : ride.nav.selectRoute(other),
                     child: Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 12),
                       child: Center(
@@ -1217,7 +1224,7 @@ class _RouteChoices extends StatelessWidget {
           ),
         ],
         const SizedBox(height: 8),
-        if (!ride.planning)
+        if (!ride.plan.planning)
         SizedBox(
           width: double.infinity,
           child: FilledButton.icon(
@@ -1227,7 +1234,7 @@ class _RouteChoices extends StatelessWidget {
               padding: const EdgeInsets.symmetric(vertical: 14),
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
             ),
-            onPressed: ride.startNavigation,
+            onPressed: ride.nav.startNavigation,
             icon: const Icon(Icons.navigation),
             label: const Text('Start', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
           ),
@@ -1244,8 +1251,8 @@ class _NavBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final step = ride.nextStep;
-    final pump = ride.nearestPumpMeters;
+    final step = ride.nav.nextStep;
+    final pump = ride.nav.nearestPumpMeters;
     return Material(
       color: const Color(0xFF1A73E8),
       elevation: 3,
@@ -1256,9 +1263,9 @@ class _NavBanner extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              ride.navArrived
-                  ? 'Arrived · ${ride.destinationName}'
-                  : '${formatKm(_metersToStep(ride) / 1000)}  ·  ${step?.instruction ?? 'Continue to ${ride.destinationName}'}',
+              ride.nav.navArrived
+                  ? 'Arrived · ${ride.nav.destinationName}'
+                  : '${formatKm(_metersToStep(ride) / 1000)}  ·  ${step?.instruction ?? 'Continue to ${ride.nav.destinationName}'}',
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w800, height: 1.15),
@@ -1276,8 +1283,8 @@ class _NavBanner extends StatelessWidget {
 }
 
 double _metersToStep(RideController ride) {
-  final step = ride.nextStep;
-  if (step == null) return ride.remainingKm * 1000;
+  final step = ride.nav.nextStep;
+  if (step == null) return ride.nav.remainingKm * 1000;
   const distance = Distance();
   return distance.as(LengthUnit.Meter, ride.you, step.point);
 }
@@ -1289,9 +1296,9 @@ class _NavFooter extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final label = ride.navArrived
-        ? 'Done · ${ride.destinationName}'
-        : '${ride.remainingMinutes} min · ${formatKm(ride.remainingKm)} · ${ride.arrivalLabel}';
+    final label = ride.nav.navArrived
+        ? 'Done · ${ride.nav.destinationName}'
+        : '${ride.nav.remainingMinutes} min · ${formatKm(ride.nav.remainingKm)} · ${ride.nav.arrivalLabel}';
     return Material(
       color: Colors.white,
       elevation: 4,
@@ -1306,7 +1313,7 @@ class _NavFooter extends StatelessWidget {
             IconButton(
               tooltip: 'Exit',
               visualDensity: VisualDensity.compact,
-              onPressed: ride.stopNavigation,
+              onPressed: ride.nav.stopNavigation,
               icon: const Icon(Icons.close, size: 18),
             ),
           ],
@@ -1377,9 +1384,9 @@ class _TollHaltCard extends StatelessWidget {
             ),
             Row(
               children: [
-                TextButton(onPressed: ride.dismissToll, child: const Text('Not now')),
+                TextButton(onPressed: ride.plan.dismissToll, child: const Text('Not now')),
                 const Spacer(),
-                FilledButton(onPressed: ride.addTollAsHalt, child: const Text('Add as halt')),
+                FilledButton(onPressed: ride.plan.addTollAsHalt, child: const Text('Add as halt')),
               ],
             ),
           ],

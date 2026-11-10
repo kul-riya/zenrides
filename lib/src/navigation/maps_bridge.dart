@@ -1,6 +1,6 @@
 import 'package:latlong2/latlong.dart';
 
-import 'maps_bridge_stub.dart' if (dart.library.js_interop) 'maps_bridge_web.dart' as impl;
+import 'maps_bridge_io.dart' if (dart.library.js_interop) 'maps_bridge_web.dart' as impl;
 import 'maps_types.dart';
 
 export 'maps_types.dart';

@@ -1,7 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:latlong2/latlong.dart';
-import 'package:zenrides/src/maps_types.dart';
-import 'package:zenrides/src/trip_plan.dart';
+import 'package:zenrides/src/navigation/maps_types.dart';
+import 'package:zenrides/src/planning/trip_plan.dart';
 
 String _clock(int minute) {
   final hour = minute ~/ 60;

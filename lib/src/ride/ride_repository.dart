@@ -1,7 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
-import 'firestore_time.dart';
-import 'repository_exception.dart';
+import '../firestore_time.dart';
+import '../repository_exception.dart';
 
 /// `rides/{code}`: the ride document itself. Holds who leads it (adminId),
 /// the live SOS and the shared multi-day plan. Both live on one document so
@@ -20,8 +20,7 @@ class RideRepository {
   Future<void> deleteRideDocument(String code) async {
     try {
       final riders = await _db.collection('rides').doc(code).collection('riders').get();
-      final members = await _db.collection('riders').doc(code).collection('members').get();
-      for (final doc in [...riders.docs, ...members.docs]) {
+      for (final doc in riders.docs) {
         await doc.reference.delete();
       }
       await _db.collection('rides').doc(code).delete();
@@ -35,10 +34,13 @@ class RideRepository {
       final doc = await _db.collection('rides').doc(code).get();
       if (!doc.exists) return const RideRecord();
       final data = doc.data() ?? {};
+      final adminId = data['adminId'];
       return RideRecord(
+        exists: true,
         sos: _sos(data['sos']),
         planJson: data['plan'] as String?,
         planUpdatedAt: (data['planUpdatedAt'] as num?)?.round(),
+        adminId: adminId is String && adminId.isNotEmpty ? adminId : null,
       );
     } catch (e) {
       throw RideApiException('Could not read the ride: $e');
@@ -101,11 +103,19 @@ class SosFix {
 }
 
 class RideRecord {
-  const RideRecord({this.sos, this.planJson, this.planUpdatedAt});
+  const RideRecord({
+    this.exists = false,
+    this.sos,
+    this.planJson,
+    this.planUpdatedAt,
+    this.adminId,
+  });
 
+  final bool exists;
   final SosFix? sos;
   final String? planJson;
   final int? planUpdatedAt;
+  final String? adminId;
 }
 
 SosFix? _sos(Object? raw) {

@@ -6,10 +6,10 @@ import 'package:flutter/semantics.dart';
 import 'package:firebase_core/firebase_core.dart';
 
 import 'firebase_options.dart';
-import 'src/maps_bridge.dart';
-import 'src/phone_sign_in.dart';
-import 'src/ride_controller.dart';
-import 'src/ride_shell.dart';
+import 'src/navigation/maps_bridge.dart';
+import 'src/auth/phone_sign_in.dart';
+import 'src/ride/ride_controller.dart';
+import 'src/ride/ride_shell.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();

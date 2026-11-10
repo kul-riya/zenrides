@@ -24,8 +24,8 @@ abstract class MapAdapter {
   Future<LatLng?> placePoint(String placeId);
 }
 
-/// Delegates to MapsBridge, which is already split for web vs. non-web by
-/// conditional import (maps_bridge_web.dart / maps_bridge_stub.dart).
+/// Delegates to MapsBridge, which is already split for web vs. phone by
+/// conditional import (maps_bridge_web.dart / maps_bridge_io.dart).
 class GoogleMapsAdapter implements MapAdapter {
   const GoogleMapsAdapter();
 

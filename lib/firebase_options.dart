@@ -12,6 +12,7 @@ class DefaultFirebaseOptions {
     projectId: 'myzenrides',
     authDomain: 'myzenrides.firebaseapp.com',
     storageBucket: 'myzenrides.firebasestorage.app',
+    databaseURL: 'https://myzenrides-default-rtdb.asia-southeast1.firebasedatabase.app',
   );
 
   static const FirebaseOptions android = FirebaseOptions(
@@ -20,6 +21,7 @@ class DefaultFirebaseOptions {
     messagingSenderId: '126377853304',
     projectId: 'myzenrides',
     storageBucket: 'myzenrides.firebasestorage.app',
+    databaseURL: 'https://myzenrides-default-rtdb.asia-southeast1.firebasedatabase.app',
   );
 
   static const FirebaseOptions ios = FirebaseOptions(
@@ -28,5 +30,6 @@ class DefaultFirebaseOptions {
     messagingSenderId: '126377853304',
     projectId: 'myzenrides',
     storageBucket: 'myzenrides.firebasestorage.app',
+    databaseURL: 'https://myzenrides-default-rtdb.asia-southeast1.firebasedatabase.app',
   );
 }

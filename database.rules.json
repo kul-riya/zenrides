@@ -1,0 +1,12 @@
+{
+  "rules": {
+    "rides": {
+      "$code": {
+        "riders": {
+          ".read": true,
+          ".write": true
+        }
+      }
+    }
+  }
+}

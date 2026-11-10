@@ -4,7 +4,7 @@ import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
 
 import 'maps_types.dart';
-import 'repository_exception.dart';
+import '../repository_exception.dart';
 
 const _overpassServers = [
   'https://overpass-api.de/api/interpreter',

@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:zenrides/src/phone_sign_in.dart';
+import 'package:zenrides/src/auth/phone_sign_in.dart';
 
 void main() {
   test('a 10 digit phone number is an Indian number', () {

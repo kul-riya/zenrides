@@ -23,19 +23,23 @@ class PhoneCodeSent {
   final ConfirmationResult _confirmation;
 }
 
-/// Wraps phone-OTP sign-in so the sign-in screens and RideController never
-/// call FirebaseAuth directly. Used only on web; Android identifies a rider
-/// by a name and a device id instead (see RideController.restoreIdentity).
+/// Wraps sign-in so the ride never calls FirebaseAuth directly. Web uses
+/// phone OTP. A phone with no session signs in anonymously so the uid can
+/// be stored on users/{uid}.
 abstract class AuthService {
   AuthUser? get currentUser;
 
   Stream<AuthUser?> authStateChanges();
+
+  Future<AuthUser> signInAnonymously();
 
   Future<PhoneCodeSent> sendCode(String phoneE164);
 
   Future<AuthUser> confirmCode(PhoneCodeSent sent, String smsCode);
 
   Future<void> setDisplayName(String name);
+
+  Future<void> signOut();
 }
 
 class FirebaseAuthService implements AuthService {
@@ -46,6 +50,18 @@ class FirebaseAuthService implements AuthService {
 
   @override
   Stream<AuthUser?> authStateChanges() => FirebaseAuth.instance.authStateChanges().map(_wrap);
+
+  @override
+  Future<AuthUser> signInAnonymously() async {
+    try {
+      final result = await FirebaseAuth.instance.signInAnonymously();
+      final user = _wrap(result.user);
+      if (user == null) throw AuthException('Could not sign in.');
+      return user;
+    } on FirebaseAuthException catch (error) {
+      throw AuthException(error.message ?? 'Could not sign in.');
+    }
+  }
 
   @override
   Future<PhoneCodeSent> sendCode(String phoneE164) async {
@@ -75,6 +91,15 @@ class FirebaseAuthService implements AuthService {
       await FirebaseAuth.instance.currentUser?.reload();
     } on FirebaseAuthException catch (error) {
       throw AuthException(error.message ?? 'Could not save that name.');
+    }
+  }
+
+  @override
+  Future<void> signOut() async {
+    try {
+      await FirebaseAuth.instance.signOut();
+    } on FirebaseAuthException catch (error) {
+      throw AuthException(error.message ?? 'Could not log out.');
     }
   }
 

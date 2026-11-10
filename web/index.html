@@ -271,6 +271,26 @@
         return routes;
       }
 
+      async function computeDrivingRoutes(origin, destination, via, fields, extraComputations) {
+        var routesLib = await google.maps.importLibrary('routes');
+        var request = {
+          origin: origin,
+          destination: destination,
+          travelMode: 'DRIVING',
+          routingPreference: 'TRAFFIC_AWARE',
+          computeAlternativeRoutes: true,
+          fields: fields
+        };
+        if (extraComputations) request.extraComputations = extraComputations;
+        if (via && via.length) {
+          request.intermediates = via.map(function (spot) {
+            return { lat: spot.lat, lng: spot.lng };
+          });
+        }
+        var result = await routesLib.Route.computeRoutes(request);
+        return result.routes || [];
+      }
+
       window.zenRidesMaps = {
         fuelAlong: async function (pointsJson) {
           var points = [];
@@ -492,23 +512,8 @@
           }
           if (ready()) {
             try {
-              var routesLib = await google.maps.importLibrary('routes');
-              var request = {
-                origin: origin,
-                destination: destination,
-                travelMode: 'DRIVING',
-                routingPreference: 'TRAFFIC_AWARE',
-                departureTime: new Date(),
-                computeAlternativeRoutes: true,
-                fields: ['path', 'durationMillis', 'distanceMeters', 'description']
-              };
-              if (via.length) {
-                request.intermediates = via.map(function (spot) {
-                  return { lat: spot.lat, lng: spot.lng };
-                });
-              }
-              var result = await routesLib.Route.computeRoutes(request);
-              var routes = (result.routes || []).map(function (route) {
+              var found = await computeDrivingRoutes(origin, destination, via, ['path', 'durationMillis', 'distanceMeters', 'description']);
+              var routes = found.map(function (route) {
                 var points = [];
                 (route.path || []).forEach(function (point) {
                   var spot = pointOf(point);
@@ -540,16 +545,6 @@
             var text = error && (error.message || error.status) ? (error.message || error.status) : String(error);
             return String(text).replace(/AIza[0-9A-Za-z_\-]+/g, '[key]');
           }
-          function mapsKey() {
-            var scripts = document.getElementsByTagName('script');
-            for (var i = 0; i < scripts.length; i++) {
-              var src = scripts[i].src || '';
-              if (src.indexOf('maps.googleapis.com/maps/api/js') < 0) continue;
-              var match = src.match(/[?&]key=([^&]+)/);
-              if (match) return decodeURIComponent(match[1]);
-            }
-            return '';
-          }
           var failures = [];
           var hazards = [];
           var rad = (heading || 0) * Math.PI / 180;
@@ -562,16 +557,14 @@
             failures.push('Routes API Route.computeRoutes: Google Maps JavaScript library is not loaded');
           } else {
             try {
-              var routesLib = await google.maps.importLibrary('routes');
-              var result = await routesLib.Route.computeRoutes({
-                origin: { lat: lat, lng: lng },
-                destination: dest,
-                travelMode: 'DRIVING',
-                routingPreference: 'TRAFFIC_AWARE',
-                extraComputations: ['TRAFFIC_ON_POLYLINE'],
-                fields: ['path', 'warnings', 'description', 'speedPaths', 'legs']
-              });
-              (result.routes || []).forEach(function (route, ri) {
+              var found = await computeDrivingRoutes(
+                { lat: lat, lng: lng },
+                dest,
+                [],
+                ['path', 'warnings', 'description', 'speedPaths', 'legs'],
+                ['TRAFFIC_ON_POLYLINE']
+              );
+              found.forEach(function (route, ri) {
                 (route.warnings || []).forEach(function (warning, wi) {
                   if (!warning) return;
                   hazards.push({
@@ -602,32 +595,6 @@
             } catch (error) {
               failures.push('Routes API Route.computeRoutes: ' + scrub(error));
             }
-          }
-          try {
-            var key = mapsKey();
-            var url = 'https://maps.googleapis.com/maps/api/directions/json?origin=' + lat + ',' + lng
-              + '&destination=' + dest.lat + ',' + dest.lng
-              + '&departure_time=now&key=' + encodeURIComponent(key);
-            var response = await fetch(url);
-            var body = await response.json();
-            if (!body || body.status !== 'OK') {
-              failures.push('Directions API directions/json: ' + ((body && body.status) || response.status) + (body && body.error_message ? ' — ' + body.error_message : ''));
-            } else {
-              (body.routes || []).forEach(function (route, ri) {
-                (route.warnings || []).forEach(function (warning, wi) {
-                  if (!warning) return;
-                  hazards.push({
-                    id: 'directions-warning-' + ri + '-' + wi,
-                    title: String(warning),
-                    detail: 'Directions API warnings',
-                    lat: null,
-                    lng: null
-                  });
-                });
-              });
-            }
-          } catch (error) {
-            failures.push('Directions API directions/json: ' + scrub(error));
           }
           return JSON.stringify({ hazards: hazards, failures: failures });
         },
